@@ -10,8 +10,8 @@ Runs fully offline. The application makes no network calls of any kind.
 
 > Interface is in Portuguese; code, identifiers and documentation are in English.
 
-**Status: phase 1 of 10.** Schema verification, catalog reading and the channel
-registry are done. See [Roadmap](#roadmap).
+**Status: phase 2 of 10.** Schema verification, the validated time base, event
+step series and lap splitting are done. See [Roadmap](#roadmap).
 
 ---
 
@@ -78,6 +78,27 @@ python scripts/inspect_schema.py "path/to/session.duckdb"
 Pass several files to compare their schemas. `--json out.json` writes a
 machine-readable summary.
 
+List the laps of a session, which exercises the whole ingestion path:
+
+```bash
+python scripts/list_laps.py "path/to/session.duckdb"
+```
+
+```
+  volta        tempo    medido       S1       S2       S3  situação
+  --------------------------------------------------------------------
+    0     2:01.920   229.468   47.954  38.928  35.038  parcial
+    1        --      106.900   35.391      --      --  invalidada
+    2     1:50.402   110.420   39.045  36.521  34.836  válida
+    5     1:58.171   118.180   35.488  47.303  35.380  fora da pista, válida (3.4%)
+    8 *   1:47.060   107.060   35.717  36.283  35.060  válida
+```
+
+It ends with an independent cross-check: `Lap Dist` resets to zero at every
+start/finish crossing, so the reset must land on the reconstructed lap boundary.
+It does, within one sample of a channel that was never involved in producing
+those boundaries.
+
 What inspecting three real sessions (Practice, Qualifying and Race; a GT3 and
 an LMP3) established:
 
@@ -121,6 +142,78 @@ Two worth knowing about, because they are easy to get wrong:
   expressed as a fraction, so the 0-100 → 0-1 conversion is on the critical
   path. `Steering Pos` is percent of full lock, *not* degrees; converting it to
   an angle needs the steering lock from the `CarSetup` blob.
+
+### Two channels are mislabelled
+
+**`G Force Lat` holds longitudinal acceleration and `G Force Long` holds
+lateral acceleration. Both are negated.**
+
+Neither acceleration needs the G channels to be measured. Longitudinal is
+`dV/dt` from `Ground Speed`; lateral is `V·ω` with `ω` from the wheel-speed
+asymmetry and the track width. Correlating each channel against both references
+over full race sessions at three tracks with two cars:
+
+| channel | vs `dV/dt` | vs `V·ω` | is really |
+|---|---|---|---|
+| `G Force Lat` | **−0.997** | −0.075 | longitudinal, negated |
+| `G Force Long` | −0.074 | **−0.987** | lateral, negated |
+| `G Force Vert` | +0.058 | +0.164 | vertical, correct |
+
+A 0.5 s moving average moves the correlations by less than 0.01, so it is not a
+noise artefact. Two independent checks agree: through a sustained 70 km/h corner
+at constant speed `G Force Lat` stays near zero and `G Force Long` holds −1.5 g,
+and under heavy straight-line braking `G Force Long` averages −0.02 g.
+
+This is not cosmetic. The g-g diagram would plot longitudinal acceleration on
+its lateral axis, and the track-map reconstruction from `ω = a_y / V` would
+integrate the wrong channel entirely.
+
+Use `session.acceleration("lateral" | "longitudinal" | "vertical")`, which
+returns correctly labelled values in g — positive longitudinal under
+acceleration, positive lateral in a right-hand corner (SAE convention). The raw
+channels remain reachable under their file names via `session.channel(...)`.
+`tests/test_physical_validation.py` re-derives the whole result on every run, so
+a game update that fixes the labelling fails the suite instead of silently
+inverting every sign.
+
+### Wheel order is FL, FR, RL, RR — verified, not assumed
+
+Nothing in the file says which of `value1`..`value4` is which wheel. Two
+independent physical checks settle it:
+
+- **Front/rear** from brake temperature: the front brakes do most of the work,
+  and wheels 1,2 run 60 °C hotter than 3,4 (283 °C vs 223 °C at Le Mans,
+  387 vs 330 at Monza).
+- **Left/right** from cornering kinematics: the outside wheels run a larger
+  radius and turn faster. Grouped by steering sign, the asymmetry between
+  wheels (1,3) and (2,4) flips direction and is worth about 0.7 m/s each way.
+
+Tyre temperature is useless for this — it has seconds of thermal inertia and
+reflects the whole lap's balance rather than the corner you are in. It never
+flips sign between left and right corners, which is what made the kinematic
+check necessary.
+
+### Lap structure
+
+- **`Lap`** fires at each start/finish crossing with the new lap number; lap *k*
+  runs from its event to the next.
+- **`Lap Time`** fires at the same instant with the time of the lap that just
+  *ended*, matching the gap between crossings to within 0.02 s. **Exactly zero
+  means the game invalidated the lap** — that ruling is about track limits,
+  which no channel records, so it is taken as authoritative.
+- **`Last Sector1` and `Last Sector2` are cumulative**, not per-sector. Sector
+  durations are `S1`, `S2 − S1`, `LapTime − S2`. Verified against `Current
+  Sector` transitions, and the three durations sum to the lap time exactly.
+- The first and last lap of every session are partial, because recording starts
+  and stops mid-lap. Normal, flagged, not discarded.
+- **Off-track does not imply an invalid lap.** A Monza lap with a
+  near-stationary excursion onto grass stayed valid, while laps with no
+  off-track sample at all were invalidated. The two are reported independently.
+
+Surface codes were identified by correlating each with speed: 0 = track
+(~176 km/h), 2 = grass (18 km/h during a real excursion), 4 = gravel (39 km/h),
+5 = kerb (128 km/h and the highest lateral g — being ridden), 6 = another legal
+surface. Configurable in `config/defaults.toml`.
 
 ### Channels that do not exist
 
@@ -189,7 +282,7 @@ strips those fields and writes a new file rather than modifying the original.
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Schema verification, catalog reading, channel registry | ✅ done |
-| 2 | Time base with `GPS Time` validation, step events, lap splitting | |
+| 2 | Time base with `GPS Time` validation, step events, lap splitting | ✅ done |
 | 3 | Parquet cache + historical catalog | |
 | 4 | Full analysis layer with unit tests on synthetic data | |
 | 5 | Minimal UI: session browser + speed trace | |

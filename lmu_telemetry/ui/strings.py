@@ -42,6 +42,55 @@ SESSION_TYPE_WARMUP = "Warm-up"
 SESSION_TYPE_TEST = "Teste"
 SESSION_TYPE_UNKNOWN = "Desconhecido ({code})"
 
+# --- Laps -------------------------------------------------------------------
+LAP_FLAG_LABEL = {
+    "valid": "válida",
+    "partial": "parcial",
+    "invalidated": "invalidada",
+    "out_lap": "volta de saída",
+    "in_lap": "volta de entrada",
+    "in_pits": "nos boxes",
+    "off_track": "fora da pista",
+}
+
+WARN_NO_LAP_CHANNEL = (
+    "O canal 'Lap' não foi gravado nesta sessão, então não é possível cortar a "
+    "sessão em voltas."
+)
+WARN_SINGLE_LAP_MARKER = (
+    "A sessão tem apenas uma marcação de volta: nenhuma volta completa foi "
+    "gravada."
+)
+WARN_NO_PIT_CHANNEL = (
+    "O canal 'In Pits' não está disponível: voltas de entrada e saída dos boxes "
+    "não puderam ser identificadas."
+)
+INFO_PITS_NEVER_TOGGLED = (
+    "O canal 'In Pits' não mudou durante a sessão inteira (nenhuma passagem "
+    "pelos boxes). A sessão é tratada como um único stint."
+)
+WARN_NO_SURFACE_CHANNEL = (
+    "O canal 'SurfaceTypes' não está disponível: saídas de pista não puderam "
+    "ser detectadas."
+)
+
+# --- Session listing (scripts/list_laps.py) ---------------------------------
+LAPS_TITLE = "VOLTAS DA SESSÃO"
+LAPS_TRACK = "Pista"
+LAPS_CAR = "Carro"
+LAPS_SESSION = "Sessão"
+LAPS_DATE = "Data (UTC)"
+LAPS_WEATHER = "Condições"
+LAPS_DURATION = "Duração da gravação"
+LAPS_TIME_BASE = "Base de tempo"
+LAPS_TIME_BASE_UNIFORM = "validada pelo GPS Time (deriva máx. {drift:.4f} s)"
+LAPS_TIME_BASE_CORRECTED = "CORRIGIDA pelo GPS Time (deriva {drift:.4f} s)"
+LAPS_TIME_BASE_UNVALIDATED = "NÃO validada (GPS Time indisponível)"
+LAPS_TABLE_HEADER = "volta        tempo    medido       S1       S2       S3  situação"
+LAPS_NO_LAPS = "Nenhuma volta identificada nesta sessão."
+LAPS_SUMMARY = "{n_total} voltas · {n_comparable} comparáveis · melhor {best}"
+LAPS_NO_COMPARABLE = "{n_total} voltas · nenhuma comparável"
+
 # --- Channels ---------------------------------------------------------------
 ERR_CHANNEL_NOT_FOUND = (
     "O canal '{channel}' não foi gravado nesta sessão. "

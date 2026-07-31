@@ -28,3 +28,37 @@ max_drift_s = 0.05
 # Minimum number of valid GPS Time samples required before we trust it enough
 # to validate (let alone correct) the time base.
 min_gps_samples = 100
+
+[laps]
+# A lap's measured span (time between two consecutive "Lap" events) must match
+# the official time the game reports for it. When it does not, the recording
+# does not cover the whole lap - normal for the first and last lap of every
+# session - and the lap is marked partial.
+#
+# Measured against real sessions the agreement is within 0.02 s for complete
+# laps, so 0.5 s is loose enough to never produce a false positive and tight
+# enough to catch a genuinely truncated lap.
+max_time_mismatch_s = 0.5
+
+[surfaces]
+# SurfaceTypes codes, one per wheel, sampled at 5 Hz.
+#
+# Nothing in the file documents this enum. It was identified empirically by
+# correlating each code with speed and lateral g over two full race sessions:
+#
+#   code 0  ~176 km/h                 track
+#   code 2  ~18 km/h (Monza excursion) grass
+#   code 4  ~39 km/h                  gravel
+#   code 5  ~128 km/h, highest g_lat  kerb  (fast and loaded: being ridden)
+#   code 6  ~132-186 km/h             other legal surface (astroturf / paint)
+#
+# Codes 1 and 3 were never observed; they are included from the rFactor 2
+# convention LMU inherits (1 = wet track, 3 = dirt) and should be treated as
+# unverified.
+off_track_codes = [2, 3, 4]
+
+# Fraction of a lap's wheel-samples that must be off track before the lap is
+# flagged. One wheel brushing grass for a moment is not an off-track lap: at
+# Le Mans that happens at 163 km/h without the driver losing anything.
+min_off_track_fraction = 0.01
+

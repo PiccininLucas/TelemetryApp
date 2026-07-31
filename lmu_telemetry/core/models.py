@@ -1,15 +1,15 @@
 """Domain models shared by every layer.
 
-Phase 1 only needs `SessionInfo`. `Lap`, `Corner` and `Stint` arrive with the
-phases that produce them.
+`Corner` and `Stint` arrive with the phases that produce them.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 
 from lmu_telemetry.core.errors import SessionNameError
@@ -44,8 +44,11 @@ class SessionInfo:
         started_at: Session start, timezone-aware UTC. The game writes UTC and
             marks it with a trailing "Z"; keeping it UTC avoids two sessions
             recorded around a DST change sorting incorrectly.
-        car_name: None when neither `metadata` nor the file name reveals it.
-            The importer asks the user and stores the answer in the catalog.
+        car_name: From `metadata.CarName`, which every file inspected carries.
+            None only when the metadata is incomplete.
+        car_class: From `metadata.CarClass` - "GT3", "LMP3" and so on. Laps are
+            only comparable within a class, so this is part of the identity.
+        weather: From `metadata.WeatherConditions`.
         file_hash: SHA-256 of the source file, used to invalidate the parquet
             cache when the source changes.
         file_size_bytes: Size of the source file.
@@ -56,6 +59,8 @@ class SessionInfo:
     session_type_code: str
     started_at: datetime
     car_name: str | None = None
+    car_class: str | None = None
+    weather: str | None = None
     file_hash: str | None = None
     file_size_bytes: int | None = None
 
@@ -63,6 +68,123 @@ class SessionInfo:
     def session_type_label(self) -> str:
         """Portuguese label for the session type, for display."""
         return strings.session_type_label(self.session_type_code)
+
+    @property
+    def comparison_key(self) -> tuple[str, str]:
+        """What makes two sessions' laps comparable: same track, same car.
+
+        The historical catalog's best-lap table is keyed on this.
+        """
+        return (self.track_name, self.car_name or "?")
+
+
+class LapFlag(str, Enum):
+    """What is known about a lap. A lap can carry several of these at once."""
+
+    #: A complete, timed lap the game did not invalidate.
+    VALID = "valid"
+
+    #: The recording does not cover the whole lap. Always true of the first lap
+    #: of a session and of the last, because recording starts and stops mid-lap.
+    #: This is the normal case, not an exception.
+    PARTIAL = "partial"
+
+    #: The game reported a lap time of exactly zero, which is how it marks a lap
+    #: it invalidated. This is the game's own verdict on track limits and is
+    #: treated as authoritative - the telemetry has no channel that reproduces
+    #: the ruling.
+    INVALIDATED = "invalidated"
+
+    #: The car left the pits during this lap.
+    OUT_LAP = "out_lap"
+
+    #: The car entered the pits during this lap.
+    IN_LAP = "in_lap"
+
+    #: The car was in the pit lane for part of the lap.
+    IN_PITS = "in_pits"
+
+    #: Wheels spent time on grass, dirt or gravel. Informational only: measured
+    #: against real sessions this does *not* predict the game's invalidation,
+    #: because track-limit rulings are about kerbs and white lines rather than
+    #: about leaving the road. A lap at Monza with a near-stationary excursion
+    #: onto grass stayed valid.
+    OFF_TRACK = "off_track"
+
+
+@dataclass(frozen=True, slots=True)
+class Lap:
+    """One lap of a session.
+
+    Attributes:
+        index: Position in the session's lap list, from zero.
+        number: Lap number as the game counts it.
+        t_start: Session-clock time of the crossing that opened this lap.
+        t_end: Session-clock time of the crossing that closed it.
+        official_time_s: Lap time as reported by the game, or None when it
+            reported none. Zero means the game invalidated the lap.
+        sector_times_s: The three sector durations, any of which may be None.
+        flags: Everything known about the lap.
+        off_track_fraction: Share of the lap's wheel-samples on grass, dirt or
+            gravel.
+    """
+
+    index: int
+    number: int
+    t_start: float
+    t_end: float
+    official_time_s: float | None = None
+    sector_times_s: tuple[float | None, float | None, float | None] = (None, None, None)
+    flags: frozenset[LapFlag] = field(default_factory=frozenset)
+    off_track_fraction: float = 0.0
+
+    @property
+    def measured_time_s(self) -> float:
+        """Duration actually covered by the recording, from the two crossings.
+
+        For a complete lap this agrees with `official_time_s` to within about
+        0.02 s. It is the only time available for a lap the game invalidated,
+        since those are reported as zero.
+        """
+        return self.t_end - self.t_start
+
+    @property
+    def time_s(self) -> float:
+        """The lap time to display: the official one when the game gave a real
+        one, the measured span otherwise."""
+        if self.official_time_s:  # rejects both None and 0.0
+            return self.official_time_s
+        return self.measured_time_s
+
+    @property
+    def is_partial(self) -> bool:
+        return LapFlag.PARTIAL in self.flags
+
+    @property
+    def is_invalidated(self) -> bool:
+        return LapFlag.INVALIDATED in self.flags
+
+    @property
+    def is_valid(self) -> bool:
+        return LapFlag.VALID in self.flags
+
+    @property
+    def is_comparable(self) -> bool:
+        """True when this lap may be used for lap-to-lap comparison.
+
+        Excludes partial laps, laps the game invalidated, and in/out laps: a lap
+        that starts or ends in the pit lane has a pit-limited section that makes
+        its time meaningless against a flying lap.
+        """
+        excluded = {
+            LapFlag.PARTIAL, LapFlag.INVALIDATED,
+            LapFlag.OUT_LAP, LapFlag.IN_LAP, LapFlag.IN_PITS,
+        }
+        return self.is_valid and not (self.flags & excluded)
+
+    def flag_labels(self) -> list[str]:
+        """Portuguese labels for this lap's flags, for display."""
+        return [strings.LAP_FLAG_LABEL[flag.value] for flag in sorted(self.flags)]
 
 
 def parse_session_filename(path: Path | str) -> tuple[str, str, datetime]:
