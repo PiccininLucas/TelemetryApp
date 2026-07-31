@@ -10,8 +10,9 @@ Runs fully offline. The application makes no network calls of any kind.
 
 > Interface is in Portuguese; code, identifiers and documentation are in English.
 
-**Status: phase 2 of 10.** Schema verification, the validated time base, event
-step series and lap splitting are done. See [Roadmap](#roadmap).
+**Status: phase 3 of 10.** Schema verification, the validated time base, lap
+splitting, the session cache and the historical catalog are done. See
+[Roadmap](#roadmap).
 
 ---
 
@@ -240,6 +241,56 @@ folder with `LMU_TELEMETRY_DIR`.
 
 ---
 
+## Storage
+
+Everything the app writes lives under `~/.lmu-telemetry` (override with
+`LMU_TELEMETRY_DATA_DIR`). Nothing is ever written next to the game's files, and
+session files are opened read-only.
+
+```bash
+python scripts/import_session.py --folder "path/to/UserData/Telemetry"
+python scripts/import_session.py --show
+```
+
+The **catalog** (`catalog.duckdb`) answers what a single session cannot: the
+best lap ever at a track in a car, what the corners are called, which sessions
+exist. Keys are natural — a session's id is its source file's SHA-256, a lap's
+is `<session_id>:<index>` — so re-importing a file updates it in place and
+import is idempotent without checking first.
+
+`best_laps` is a **view**, not a table. The specification lists it among the
+tables, but a stored best lap goes stale the moment a session is re-imported or
+deleted, and a wrong personal best is worse than none.
+
+### Why channel data is not cached
+
+The specification asks for the normalised telemetry to be persisted to parquet.
+Measured on real sessions, that is a bad trade:
+
+| | |
+|---|---|
+| read 5 chart channels from the game's file | 3.8 ms |
+| read the same 5 columns from a parquet copy | 2.9 ms |
+| size of a 100 Hz parquet copy | **1.95×** the source (52 MB from 26.7 MB) |
+
+The source is already a compressed columnar database, so re-encoding it buys
+about a millisecond and costs twice the disk — roughly 1.9 GB for 64 sessions.
+Dropping the 26 channels that never vary saves nothing either; constant columns
+already compress to almost nothing.
+
+What *is* expensive is opening a session: 83 ms, of which 53 ms is building the
+channel registry from one `DESCRIBE` and one `COUNT(*)` per channel. Browsing 64
+sessions costs about 5 s before anything is drawn. So the cache stores the
+**manifest** — identity, time base, channel registry, lap table — at a few
+kilobytes each. The whole cache for 64 real sessions is **1.2 MB**.
+
+Phase 4 adds the artifact that genuinely is expensive to recompute: per-lap
+frames on a 1 m distance grid, which need cumulative integration of speed and a
+per-lap scale correction. Those land in `laps/` inside the same session folder
+and reuse the same hash invalidation.
+
+---
+
 ## Architecture
 
 Five layers, dependencies strictly in one direction.
@@ -283,7 +334,7 @@ strips those fields and writes a new file rather than modifying the original.
 |---|---|---|
 | 1 | Schema verification, catalog reading, channel registry | ✅ done |
 | 2 | Time base with `GPS Time` validation, step events, lap splitting | ✅ done |
-| 3 | Parquet cache + historical catalog | |
+| 3 | Session cache + historical catalog | ✅ done |
 | 4 | Full analysis layer with unit tests on synthetic data | |
 | 5 | Minimal UI: session browser + speed trace | |
 | 6 | Synchronised multi-channel charts + delta-t | |

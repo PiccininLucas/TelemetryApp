@@ -91,6 +91,25 @@ LAPS_NO_LAPS = "Nenhuma volta identificada nesta sessão."
 LAPS_SUMMARY = "{n_total} voltas · {n_comparable} comparáveis · melhor {best}"
 LAPS_NO_COMPARABLE = "{n_total} voltas · nenhuma comparável"
 
+# --- Import and catalog (scripts/import_session.py) -------------------------
+IMPORT_TITLE = "IMPORTAÇÃO DE SESSÕES"
+IMPORT_DONE = "{n_imported} importadas, {n_cached} já em cache, {n_failed} com falha"
+IMPORT_FAILED = "FALHA em {name}: {detail}"
+IMPORT_NOTHING_FOUND = "Nenhum arquivo .duckdb encontrado em {folder}"
+
+CATALOG_TITLE = "CATÁLOGO HISTÓRICO"
+CATALOG_LOCATION = "Banco"
+CATALOG_CACHE = "Cache"
+CATALOG_EMPTY = "O catálogo está vazio. Importe uma sessão primeiro."
+CATALOG_STATS = (
+    "{tracks} pistas · {sessions} sessões · {laps} voltas "
+    "({comparable_laps} comparáveis) · {corners} curvas nomeadas"
+)
+CATALOG_SECTION_SESSIONS = "SESSÕES IMPORTADAS"
+CATALOG_SECTION_BEST = "MELHOR VOLTA POR PISTA E CARRO"
+CATALOG_SECTION_TRACKS = "PISTAS"
+CATALOG_TRACK_LENGTH_UNKNOWN = "comprimento desconhecido"
+
 # --- Channels ---------------------------------------------------------------
 ERR_CHANNEL_NOT_FOUND = (
     "O canal '{channel}' não foi gravado nesta sessão. "
