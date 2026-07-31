@@ -1,0 +1,30 @@
+# Default configuration for the LMU Telemetry Analyzer.
+#
+# Every numeric threshold used by the analysis layer lives here, never inline in
+# the code. Two reasons: thresholds are engineering choices that need to be
+# defensible and tunable per car/track, and hardcoded magic numbers are the
+# fastest way to make an analysis impossible to audit later.
+#
+# Phase 1 only populates the keys that phase 1 and 2 actually consume. The rest
+# of the file grows as the corresponding phase is implemented.
+
+[ingest]
+# Common time grid all channels are resampled onto (Hz). 100 Hz is above the
+# highest per-channel rate we expect, so resampling never has to decimate a
+# fast channel - it only upsamples slow ones.
+target_hz = 100.0
+
+[ingest.time_base]
+# Continuous channels carry no timestamp column: time is implicit, t[i] = i/f.
+# GPS Time is a real clock recorded as a continuous channel, so it lets us test
+# that assumption. If the game stalls or pauses mid-recording, index and time
+# stop matching and every downstream alignment silently lies.
+#
+# Maximum tolerated drift between the index-derived time and GPS Time, in
+# seconds, before the time base is rebuilt from GPS Time and a warning is
+# raised to the user.
+max_drift_s = 0.05
+
+# Minimum number of valid GPS Time samples required before we trust it enough
+# to validate (let alone correct) the time base.
+min_gps_samples = 100

@@ -1,0 +1,23 @@
+# LMU Telemetry Analyzer - runtime dependencies.
+# Versions are pinned exactly so that CI and any clone of this repository
+# resolve to the same build. Verified to have cp314 wheels on Windows.
+
+# --- Data access -------------------------------------------------------------
+duckdb==1.5.5           # reads the game's native session files
+pyarrow==25.0.0         # parquet cache backend
+
+# --- Numerics ----------------------------------------------------------------
+numpy==2.5.1
+pandas==3.0.5
+scipy==1.18.0           # savgol_filter, find_peaks, ConvexHull (phase 4 onward)
+
+# --- User interface ----------------------------------------------------------
+PySide6==6.11.1
+pyqtgraph==0.14.0       # on-screen charts: fast pan/zoom over 10^5+ points
+
+# --- Export ------------------------------------------------------------------
+matplotlib==3.11.1      # print-quality figures for the PDF report
+reportlab==5.0.0
+
+# --- Tests -------------------------------------------------------------------
+pytest==9.1.1
