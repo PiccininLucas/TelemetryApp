@@ -40,6 +40,77 @@ min_gps_samples = 100
 # enough to catch a genuinely truncated lap.
 max_time_mismatch_s = 0.5
 
+[analysis.distance]
+# Lap Dist is recorded at 10 Hz. At 250 km/h that is one sample every 7 m,
+# which cannot locate a braking point. Distance is therefore rebuilt by
+# integrating Ground Speed (100 Hz, ~0.7 m between samples) and then rescaled so
+# the lap closes on its known length, removing the drift the integration
+# accumulates.
+#
+# Reject the scale correction outside this band: a factor far from 1 means the
+# integration or the reference length is wrong, and silently stretching the lap
+# to fit would hide it.
+min_scale_factor = 0.9
+max_scale_factor = 1.1
+
+[analysis.resample]
+# Every lap-to-lap comparison happens in the distance domain, never in time.
+step_m = 1.0
+
+[analysis.corners]
+# Smoothing window for the speed trace, as a fraction of lap length. About 1% of
+# a lap is long enough to remove sample noise and short enough to keep a real
+# corner's minimum where it belongs.
+smoothing_window_fraction = 0.01
+savgol_polynomial_order = 3
+
+# A corner is a local speed minimum below this fraction of the lap's maximum
+# speed. Above it, the "minimum" is just a fast kink.
+speed_threshold_fraction = 0.85
+
+# Two minima closer together than this are one corner, not two.
+min_separation_m = 50.0
+
+# Pedals are fractions here (the file stores percent; ingest converts).
+brake_threshold = 0.03
+brake_min_duration_s = 0.1
+throttle_threshold = 0.2
+throttle_min_duration_s = 0.1
+
+# Coasting: neither pedal meaningfully applied.
+coast_brake_max = 0.03
+coast_throttle_max = 0.05
+
+# Split a slow stretch into separate corners at any internal speed peak rising
+# by at least this fraction of the lap maximum. Without it, corners linked by a
+# short burst of throttle - Lesmo 1 into Lesmo 2, the apexes of Ascari - never
+# rise back above the corner threshold and are reported as a single corner.
+split_prominence_fraction = 0.08
+
+[analysis.ideal_lap]
+# Segment boundaries sit midway along the straight between one corner and the
+# next, never at an apex, so braking, apex and exit stay in one segment.
+boundary_position = 0.5
+
+[analysis.consistency]
+# Laps slower than the median by more than this fraction are dropped before
+# measuring dispersion: a lap spoiled by traffic says nothing about the driver's
+# repeatability.
+max_lap_time_excess = 0.05
+min_laps = 3
+
+[analysis.friction]
+# Points below this speed are excluded from the g-g diagram. At a standstill the
+# accelerometers register noise that would inflate the envelope.
+min_speed_ms = 10.0
+
+[analysis.trackmap]
+# WGS-84 equatorial radius, used by the equirectangular projection.
+earth_radius_m = 6378137.0
+# Heading integration needs a forward speed floor: omega = a_y / V explodes as V
+# approaches zero.
+min_speed_ms = 5.0
+
 [surfaces]
 # SurfaceTypes codes, one per wheel, sampled at 5 Hz.
 #

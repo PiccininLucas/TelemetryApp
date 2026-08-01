@@ -38,6 +38,26 @@ def find_real_session() -> Path | None:
 
 
 @pytest.fixture(scope="session")
+def synthetic_lap():
+    """One lap of the synthetic rectangular circuit, with known properties."""
+    from tests.synthetic import make_lap
+
+    return make_lap()
+
+
+@pytest.fixture(scope="session")
+def slower_synthetic_lap():
+    """The same lap driven 3% slower everywhere.
+
+    Identical in shape, so any delta against the reference is purely the speed
+    difference and can be predicted in closed form.
+    """
+    from tests.synthetic import make_lap
+
+    return make_lap(speed_scale=0.97)
+
+
+@pytest.fixture(scope="session")
 def real_session_path() -> Path:
     """Path to a real session file, skipping the test when none exists."""
     path = find_real_session()

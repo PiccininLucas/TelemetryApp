@@ -10,9 +10,8 @@ Runs fully offline. The application makes no network calls of any kind.
 
 > Interface is in Portuguese; code, identifiers and documentation are in English.
 
-**Status: phase 3 of 10.** Schema verification, the validated time base, lap
-splitting, the session cache and the historical catalog are done. See
-[Roadmap](#roadmap).
+**Status: phase 4 of 10.** Ingestion, the historical catalog and the whole
+analysis layer are done. See [Roadmap](#roadmap).
 
 ---
 
@@ -241,6 +240,67 @@ folder with `LMU_TELEMETRY_DIR`.
 
 ---
 
+## Analysis
+
+```bash
+python scripts/analyse_session.py "path/to/session.duckdb"
+```
+
+Distance is rebuilt by integrating `Ground Speed` at 100 Hz (0.7 m between
+samples) rather than read from `Lap Dist` at 10 Hz (6.9 m at 250 km/h, which
+cannot locate a braking point), then rescaled to close on the known lap length.
+Every comparison then happens on a 1 m distance grid — two laps cover the same
+metres, not the same seconds.
+
+Run against a real Le Mans lap, the corner detector reads the circuit back:
+
+```
+  curva      ápice    v_mín   v_entr  frenagem  dist.fren  retomada
+  C4          4119    106.5    280.8      3905        214      4119     Mulsanne chicane 1
+  C6          7740     81.2    266.9      7575        165      7740     Mulsanne corner
+  C7          9850    110.0    274.8      9519        331      9850     Indianapolis
+  C8         10165     75.9    176.9     10072         93     10165     Arnage
+  C10        12297    169.0      n/d       n/d        n/d     12297     taken without braking
+```
+
+Arnage at 75.9 km/h really is the slowest corner at Le Mans, and C10 correctly
+reports no braking point rather than inventing one.
+
+The track map cross-checks itself. The GPS projection gives a bounding box of
+2597 × 5441 m against the real circuit's ~2.6 × 5.4 km and closes to 0.3 m; the
+independent reconstruction from `ω = a_y / V`, which uses no position data at
+all, stays within 10 m mean of it at Monza.
+
+**The theoretical ideal lap is not a record.** Exit speed from one segment sets
+entry into the next, so stitching the best segments produces a target that is
+probably optimistic. Segment boundaries sit midway along the straight between
+corners, never at an apex, and the speed discontinuities at the seams are
+reported so they can be drawn rather than smoothed away — they are the evidence
+that the lap never happened.
+
+Two corrections came out of running the analysis on real data rather than only
+on the synthetic circuit:
+
+- **Corner detection works from "where is the car slow", not from peak-picking.**
+  A corner held at the cornering limit produces a perfectly flat speed plateau,
+  and smoothing rings at its shoulders, so peak-picking found two minima at the
+  edges of every corner and none in the middle.
+- **Time lost per corner is measured, not modelled.** Estimating it from apex
+  speed as `L·(1/V − 1/V_best)` claimed 26 s of loss in one Monza corner of a
+  107 s lap, because a corner's window spans the whole stretch to its
+  neighbour. Reading each lap's time through the corner directly and comparing
+  against the driver's own best has no such failure mode.
+
+### Layering
+
+`analysis` imports numpy, scipy and the standard library — nothing else.
+`tests/test_architecture.py` walks the **transitive** import closure to enforce
+it, because a direct-imports-only check passes happily while `analysis` reaches
+`ingest` through `core`. `lmu_telemetry/pipeline.py` is the seam that joins
+ingestion to analysis, and is what the UI will use.
+
+---
+
 ## Storage
 
 Everything the app writes lives under `~/.lmu-telemetry` (override with
@@ -335,7 +395,7 @@ strips those fields and writes a new file rather than modifying the original.
 | 1 | Schema verification, catalog reading, channel registry | ✅ done |
 | 2 | Time base with `GPS Time` validation, step events, lap splitting | ✅ done |
 | 3 | Session cache + historical catalog | ✅ done |
-| 4 | Full analysis layer with unit tests on synthetic data | |
+| 4 | Full analysis layer with unit tests on synthetic data | ✅ done |
 | 5 | Minimal UI: session browser + speed trace | |
 | 6 | Synchronised multi-channel charts + delta-t | |
 | 7 | Track map + g-g diagram | |

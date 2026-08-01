@@ -187,6 +187,76 @@ class Lap:
         return [strings.LAP_FLAG_LABEL[flag.value] for flag in sorted(self.flags)]
 
 
+@dataclass(frozen=True, slots=True)
+class Corner:
+    """One corner of a lap, measured in the distance domain.
+
+    Every distance is metres from the start/finish line, so a corner found on
+    one lap can be matched to the same corner on another by distance.
+
+    Attributes:
+        index: Position around the lap, from zero.
+        apex_distance_m: Where the speed minimum falls.
+        minimum_speed_ms: Speed at the apex.
+        entry_speed_ms: Speed at the braking point.
+        braking_distance_m: Where sustained braking begins, or None when the
+            corner is taken without braking.
+        throttle_distance_m: Where sustained throttle resumes after the apex.
+        coasting_time_s: Time with neither pedal applied inside the corner
+            window - the cost of an unresolved decision between brake and
+            throttle.
+        trail_braking_m: Distance over which braking continues past the turn-in
+            point while speed is still falling.
+        start_distance_m: Window start, used to bound per-corner statistics.
+        end_distance_m: Window end.
+        name: The user's name for it, filled from the catalog.
+    """
+
+    index: int
+    apex_distance_m: float
+    minimum_speed_ms: float
+    entry_speed_ms: float | None = None
+    braking_distance_m: float | None = None
+    throttle_distance_m: float | None = None
+    coasting_time_s: float = 0.0
+    trail_braking_m: float = 0.0
+    start_distance_m: float = 0.0
+    end_distance_m: float = 0.0
+    name: str | None = None
+
+    @property
+    def label(self) -> str:
+        """The name to show: the user's if given, otherwise a number."""
+        return self.name or f"C{self.index + 1}"
+
+    @property
+    def braking_length_m(self) -> float | None:
+        """Distance from the braking point to the apex."""
+        if self.braking_distance_m is None:
+            return None
+        return self.apex_distance_m - self.braking_distance_m
+
+
+@dataclass(frozen=True, slots=True)
+class Stint:
+    """A run of consecutive laps between two visits to the pits.
+
+    Attributes:
+        index: Position in the session, from zero.
+        lap_indices: Indices into the session's lap list, in order.
+        started_at_s: Session-clock time the stint began.
+        ended_at_s: Session-clock time it ended.
+    """
+
+    index: int
+    lap_indices: tuple[int, ...]
+    started_at_s: float
+    ended_at_s: float
+
+    def __len__(self) -> int:
+        return len(self.lap_indices)
+
+
 def parse_session_filename(path: Path | str) -> tuple[str, str, datetime]:
     """Extract track, session type and UTC start time from a session file name.
 
