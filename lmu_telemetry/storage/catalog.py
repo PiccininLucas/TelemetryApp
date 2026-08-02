@@ -377,6 +377,50 @@ def list_sessions(
     ]
 
 
+@dataclass(frozen=True, slots=True)
+class LapRow:
+    """One row of the laps table, as the session browser needs it."""
+
+    lap_id: str
+    session_id: str
+    lap_index: int
+    lap_number: int
+    time_s: float | None
+    flags: tuple[str, ...]
+    is_comparable: bool
+
+    @property
+    def flag_labels(self) -> list[str]:
+        """Portuguese labels for this lap's flags."""
+        from lmu_telemetry.ui import strings
+
+        return [strings.LAP_FLAG_LABEL.get(flag, flag) for flag in self.flags]
+
+
+def list_laps(
+    con: duckdb.DuckDBPyConnection, session_id: str
+) -> list[LapRow]:
+    """Every lap of one session, in the order they were driven."""
+    rows = con.execute(
+        """
+        SELECT lap_id, session_id, lap_index, lap_number, time_s, flags,
+               is_comparable
+        FROM laps WHERE session_id = ? ORDER BY lap_index
+        """,
+        [session_id],
+    ).fetchall()
+
+    return [
+        LapRow(
+            lap_id=row[0], session_id=row[1], lap_index=row[2],
+            lap_number=row[3], time_s=row[4],
+            flags=tuple(f for f in (row[5] or "").split(",") if f),
+            is_comparable=bool(row[6]),
+        )
+        for row in rows
+    ]
+
+
 def best_lap(
     con: duckdb.DuckDBPyConnection,
     track_name: str,

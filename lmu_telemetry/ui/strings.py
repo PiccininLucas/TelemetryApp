@@ -53,6 +53,34 @@ LAP_FLAG_LABEL = {
     "off_track": "fora da pista",
 }
 
+#: One-word forms for the narrow column in the session tree. The full list goes
+#: in the tooltip; a lap can carry four flags at once and spelling them all out
+#: leaves no room for the track and car names.
+LAP_FLAG_SHORT = {
+    "valid": "válida",
+    "partial": "parcial",
+    "invalidated": "invalidada",
+    "out_lap": "saída",
+    "in_lap": "entrada",
+    "in_pits": "boxes",
+    "off_track": "fora",
+}
+
+#: Which flag to show when a lap has several, most decisive first. A lap that is
+#: partial cannot be used at all, so that outranks everything; being valid is
+#: only worth saying when nothing else applies.
+LAP_FLAG_PRIORITY = (
+    "partial", "invalidated", "in_lap", "out_lap", "in_pits", "off_track", "valid",
+)
+
+
+def primary_lap_flag(flags: list[str] | tuple[str, ...]) -> str:
+    """The single most important flag of a lap, for the narrow column."""
+    for candidate in LAP_FLAG_PRIORITY:
+        if candidate in flags:
+            return LAP_FLAG_SHORT[candidate]
+    return ""
+
 WARN_NO_LAP_CHANNEL = (
     "O canal 'Lap' não foi gravado nesta sessão, então não é possível cortar a "
     "sessão em voltas."
@@ -90,6 +118,53 @@ LAPS_TABLE_HEADER = "volta        tempo    medido       S1       S2       S3  si
 LAPS_NO_LAPS = "Nenhuma volta identificada nesta sessão."
 LAPS_SUMMARY = "{n_total} voltas · {n_comparable} comparáveis · melhor {best}"
 LAPS_NO_COMPARABLE = "{n_total} voltas · nenhuma comparável"
+
+# --- Main window ------------------------------------------------------------
+WINDOW_TITLE = "LMU Telemetry Analyzer"
+WINDOW_TITLE_WITH_SESSION = "{track} · {car} — LMU Telemetry Analyzer"
+
+MENU_FILE = "&Arquivo"
+MENU_VIEW = "&Exibir"
+ACTION_IMPORT = "&Importar sessão..."
+ACTION_IMPORT_FOLDER = "Importar &pasta..."
+ACTION_REFRESH = "&Atualizar catálogo"
+ACTION_QUIT = "&Sair"
+ACTION_AXIS_DISTANCE = "Eixo X: &distância"
+ACTION_AXIS_TIME = "Eixo X: &tempo"
+
+DIALOG_IMPORT_TITLE = "Escolha uma sessão de telemetria"
+DIALOG_IMPORT_FOLDER_TITLE = "Escolha a pasta Telemetry"
+DIALOG_FILE_FILTER = "Sessões do LMU (*.duckdb)"
+DIALOG_IMPORT_FAILED_TITLE = "Falha na importação"
+
+STATUS_READY = "Pronto"
+STATUS_LOADING = "Carregando {name}..."
+STATUS_IMPORTING = "Importando..."
+STATUS_IMPORTED = "{n} sessão(ões) importada(s)."
+STATUS_LAP_LOADED = (
+    "Volta {number} · {time} · {length:.0f} m · {n_corners} curvas · "
+    "carregada em {elapsed:.0f} ms"
+)
+STATUS_NO_SELECTION = "Selecione uma volta na árvore à esquerda."
+
+# --- Session browser --------------------------------------------------------
+BROWSER_TITLE = "Sessões"
+BROWSER_COLUMN_NAME = "Pista · carro · sessão · volta"
+BROWSER_COLUMN_TIME = "Tempo"
+BROWSER_COLUMN_NOTE = "Situação"
+BROWSER_EMPTY = "Catálogo vazio — use Arquivo ▸ Importar sessão."
+BROWSER_SESSION_LABEL = "{date} · {type}"
+BROWSER_LAP_LABEL = "Volta {number}"
+BROWSER_N_SESSIONS = "{n} sessões"
+BROWSER_N_LAPS = "{n} voltas"
+
+# --- Chart ------------------------------------------------------------------
+CHART_SPEED_TITLE = "Velocidade"
+CHART_AXIS_DISTANCE = "Distância (m)"
+CHART_AXIS_TIME = "Tempo (s)"
+CHART_AXIS_SPEED = "Velocidade (km/h)"
+CHART_NO_DATA = "Nenhuma volta carregada"
+CHART_CURSOR_READOUT = "{distance:.0f} m · {speed:.1f} km/h"
 
 # --- Import and catalog (scripts/import_session.py) -------------------------
 IMPORT_TITLE = "IMPORTAÇÃO DE SESSÕES"

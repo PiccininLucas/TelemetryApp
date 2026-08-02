@@ -10,8 +10,10 @@ Runs fully offline. The application makes no network calls of any kind.
 
 > Interface is in Portuguese; code, identifiers and documentation are in English.
 
-**Status: phase 4 of 10.** Ingestion, the historical catalog and the whole
-analysis layer are done. See [Roadmap](#roadmap).
+**Status: phase 5 of 10.** Ingestion, the historical catalog, the analysis layer
+and a working desktop interface. See [Roadmap](#roadmap).
+
+![Main window](docs/screenshots/main-window.png)
 
 ---
 
@@ -240,6 +242,31 @@ folder with `LMU_TELEMETRY_DIR`.
 
 ---
 
+## Running it
+
+```bash
+python main.py
+```
+
+Import sessions from **Arquivo ▸ Importar pasta...**, pointing at the game's
+`UserData/Telemetry`. The tree groups them track ▸ car ▸ session ▸ lap, since
+laps are only comparable within one track and one car. Laps that cannot be
+compared — partial, invalidated, or touching the pit lane — are dimmed rather
+than hidden: they still hold telemetry worth looking at.
+
+The window opens on the fastest comparable lap of the most recent session, which
+is almost always the lap you just drove. A lap loads in about 150 ms; the
+session file stays open so moving between laps of one session is instant.
+
+When a session's clock had to be corrected against `GPS Time`, an amber banner
+says so at the top of the window. That is not decoration — it is the only sign
+that a recording stall shifted everything after it.
+
+Tests run headless against Qt's `offscreen` platform, so the interface is
+covered in CI with no display.
+
+---
+
 ## Analysis
 
 ```bash
@@ -396,7 +423,7 @@ strips those fields and writes a new file rather than modifying the original.
 | 2 | Time base with `GPS Time` validation, step events, lap splitting | ✅ done |
 | 3 | Session cache + historical catalog | ✅ done |
 | 4 | Full analysis layer with unit tests on synthetic data | ✅ done |
-| 5 | Minimal UI: session browser + speed trace | |
+| 5 | Minimal UI: session browser + speed trace | ✅ done |
 | 6 | Synchronised multi-channel charts + delta-t | |
 | 7 | Track map + g-g diagram | |
 | 8 | Corner table, persistent naming, theoretical ideal lap | |
