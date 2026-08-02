@@ -43,7 +43,20 @@ COLOUR_BRAKE = "#e5484d"
 COLOUR_THROTTLE = "#30c48d"
 COLOUR_COAST = "#9aa0a8"
 
+#: Fill under the delta-t curve. Red where the lap is behind the reference,
+#: green where it is ahead - the one place in the interface where a red/green
+#: pair is used, because the sign is also given by which side of zero the fill
+#: sits on, so the colour is never the only cue.
+FILL_LOSS = (229, 72, 77, 70)
+FILL_GAIN = (48, 196, 141, 70)
+
 GRID_ALPHA = 0.15
+
+#: Fixed width of every plot's left axis, in pixels. Stacked plots each size
+#: their own axis to their own tick labels, so "1200" and "6" would put the two
+#: traces at different left edges and destroy the vertical alignment that makes
+#: reading a braking point across rows possible.
+AXIS_WIDTH = 62
 
 
 def apply(app: QtWidgets.QApplication) -> None:

@@ -108,10 +108,27 @@ class Session:
         return converted
 
     def channel_times(self, name: str) -> np.ndarray:
-        """Sample times of a continuous channel, on the session clock."""
+        """Sample times of a channel, on the session clock.
+
+        Two sources, and using the wrong one is silent:
+
+        - **Continuous channels (layouts A and B)** carry no timestamp. Time is
+          implicit in the row index, `t[i] = i / f`, which is what the whole
+          time base exists to validate.
+        - **Event channels (layouts C and D)** carry their own `ts` column and
+          are written only when the value *changes*, at irregular intervals.
+          Spreading their rows uniformly across the session would move every
+          one of them: `Gear` records 962 shift events over a 24-minute race,
+          and a uniform grid would place them 1.5 s apart instead of at the
+          instants they happened.
+        """
         info = self.registry.get(name)
         if info is None:
             raise ChannelNotFoundError(name)
+        if info.is_event:
+            return channel_registry.read_event_timestamps(
+                self.connection, self.registry, name
+            )
         return time_base.sample_times(info.n_samples, self.time_base)
 
     def acceleration(self, quantity: str) -> np.ndarray:

@@ -1,43 +1,68 @@
-"""The main window: browser on the left, charts in the centre.
+"""The main window: browser on the left, stacked traces in the centre.
 
-Phase 5 fills two of the three regions the specification describes. The right
-panel - track map, g-g diagram, corner table, consistency - arrives with the
-phases that compute what goes in it, and the splitter is already laid out to
-take it.
+Phase 6 turns the single speed plot into the comparison instrument: several
+channels stacked on one shared X axis, a second lap overlaid, and the delta-t
+between them.
+
+The comparison is where the physics constrains the interface. Two laps can only
+be compared in the *distance* domain, because two laps at the same elapsed time
+are at different places on the circuit. So while a comparison is drawn the time
+axis is disabled, and a reference lap from another circuit is refused outright
+rather than plotted against a distance grid that means nothing.
+
+The right panel - track map, g-g diagram, corner table, consistency - arrives
+with the phases that compute what goes in it, and the splitter is already laid
+out to take it.
 """
 
 from __future__ import annotations
 
 import time
+from enum import Enum
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from lmu_telemetry import pipeline
 from lmu_telemetry.core.errors import TelemetryError
+from lmu_telemetry.core.models import Lap
 from lmu_telemetry.ingest.session_loader import Session, load_session
 from lmu_telemetry.logging_config import get_logger
 from lmu_telemetry.storage import catalog, importer
-from lmu_telemetry.ui import strings, theme
-from lmu_telemetry.ui.chart_panel import AxisMode, SpeedChart
-from lmu_telemetry.ui.session_browser import (
-    LapSelection, SessionBrowser, format_lap_time,
+from lmu_telemetry.ui import strings
+from lmu_telemetry.ui.chart_panel import (
+    ROW_SPECS, AxisMode, ChartStack, LapTrace,
 )
+from lmu_telemetry.ui.formatting import format_gap, format_lap_time
+from lmu_telemetry.ui.session_browser import LapSelection, SessionBrowser
 
 logger = get_logger(__name__)
 
 
-class OpenSession:
-    """Holds the one session that is currently open, and its analysed laps.
+class ComparisonMode(str, Enum):
+    """What the selected lap is drawn against."""
 
-    Only one session file is kept open at a time. Opening a session costs about
-    80 ms and each lap's analysis a few tens of milliseconds, so caching the
-    analysed laps makes moving between laps of one session instant, while
-    holding a single connection keeps the file handles bounded no matter how
-    long the application runs.
+    #: One lap on its own.
+    NONE = "none"
+    #: The fastest comparable lap of the same session. The default: it answers
+    #: "where did this lap lose time against my own best" without any setup.
+    SESSION_BEST = "session_best"
+    #: A lap the user pinned, possibly from another session, so a whole
+    #: afternoon can be measured against one benchmark.
+    PINNED = "pinned"
+
+
+class OpenSession:
+    """One open session file and its analysed laps.
+
+    Opening a session costs about 80 ms and each lap's analysis a few tens of
+    milliseconds, so caching the analysed laps makes moving between laps of one
+    session instant.
     """
 
-    def __init__(self, session_id: str, session: Session, track_length_m: float | None):
+    def __init__(
+        self, session_id: str, session: Session, track_length_m: float | None
+    ) -> None:
         self.session_id = session_id
         self.session = session
         self.track_length_m = track_length_m
@@ -45,17 +70,84 @@ class OpenSession:
 
     def analysis_for(self, lap_index: int) -> pipeline.LapAnalysis | None:
         if lap_index not in self._laps:
-            lap = next(
-                (lap for lap in self.session.laps if lap.index == lap_index), None
-            )
+            lap = self._lap(lap_index)
             self._laps[lap_index] = (
                 pipeline.analyse_lap(self.session, lap, self.track_length_m)
                 if lap is not None else None
             )
         return self._laps[lap_index]
 
+    def _lap(self, lap_index: int) -> Lap | None:
+        return next((lap for lap in self.session.laps if lap.index == lap_index), None)
+
+    def best_comparable_lap(self, exclude_index: int | None = None) -> Lap | None:
+        """The session's fastest comparable lap, ignoring one index.
+
+        Read from the lap list rather than from the analyses, so choosing the
+        benchmark does not require analysing every lap of the session first.
+        """
+        candidates = [
+            lap for lap in self.session.comparable_laps
+            if lap.index != exclude_index and lap.time_s > 0
+        ]
+        return min(candidates, key=lambda lap: lap.time_s, default=None)
+
     def close(self) -> None:
         self.session.close()
+
+
+class SessionPool:
+    """The open session files, at most `capacity` of them.
+
+    Two is enough: the interface never draws more than two laps at once, and a
+    comparison against a pinned lap from another afternoon needs both files
+    open. Beyond that, holding files open only leaks handles.
+    """
+
+    def __init__(self, capacity: int = 2) -> None:
+        self._capacity = capacity
+        self._open: dict[str, OpenSession] = {}
+        #: Session ids, least recently used first.
+        self._order: list[str] = []
+
+    def get(self, selection: LapSelection) -> OpenSession:
+        """Open the selection's session, reusing it when it is already open.
+
+        Raises:
+            TelemetryError: When the file cannot be read.
+        """
+        session_id = selection.session_id
+        if session_id in self._open:
+            self._touch(session_id)
+            return self._open[session_id]
+
+        with catalog.connect() as con:
+            track_length = catalog.track_length(con, selection.track_name)
+        session = load_session(selection.source_path, with_hash=False)
+
+        self._open[session_id] = OpenSession(session_id, session, track_length)
+        self._touch(session_id)
+        self._evict()
+        return self._open[session_id]
+
+    def _touch(self, session_id: str) -> None:
+        if session_id in self._order:
+            self._order.remove(session_id)
+        self._order.append(session_id)
+
+    def _evict(self) -> None:
+        while len(self._order) > self._capacity:
+            oldest = self._order.pop(0)
+            self._open.pop(oldest).close()
+
+    def close_all(self) -> None:
+        for opened in self._open.values():
+            opened.close()
+        self._open.clear()
+        self._order.clear()
+
+    def __len__(self) -> int:
+        return len(self._open)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -63,9 +155,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self._open: OpenSession | None = None
+        self._sessions = SessionPool()
+        self._selection: LapSelection | None = None
+        self._pinned: LapSelection | None = None
+        self._mode = ComparisonMode.SESSION_BEST
         self.setWindowTitle(strings.WINDOW_TITLE)
-        self.resize(1280, 800)
+        self.resize(1360, 880)
         self._build()
         self._build_menus()
         self.reload_catalog(select_first=True)
@@ -78,9 +173,8 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # The time-base warning banner, above everything. Hidden unless the
-        # session being shown had its clock corrected - the specification asks
-        # for it to be visible at the top, not buried in a log.
+        # The warning banner, above everything. Hidden unless the session being
+        # shown had its clock corrected, or a comparison had to be refused.
         self.warning_banner = QtWidgets.QLabel()
         self.warning_banner.setProperty("role", "warning")
         self.warning_banner.setWordWrap(True)
@@ -93,12 +187,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.browser.lap_selected.connect(self.show_lap)
         self.splitter.addWidget(self.browser)
 
-        self.chart = SpeedChart()
+        self.chart = ChartStack()
         self.splitter.addWidget(self.chart)
 
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([440, 840])
+        self.splitter.setSizes([420, 940])
         layout.addWidget(self.splitter, stretch=1)
 
         self.setCentralWidget(central)
@@ -129,6 +223,13 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addAction(quit_action)
 
         view_menu = self.menuBar().addMenu(strings.MENU_VIEW)
+        self._build_axis_actions(view_menu)
+        view_menu.addSeparator()
+        self._build_channel_actions(view_menu)
+        view_menu.addSeparator()
+        self._build_comparison_actions(view_menu)
+
+    def _build_axis_actions(self, menu: QtWidgets.QMenu) -> None:
         axis_group = QtGui.QActionGroup(self)
 
         self.action_distance = QtGui.QAction(strings.ACTION_AXIS_DISTANCE, self)
@@ -138,15 +239,56 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda: self.chart.set_axis_mode(AxisMode.DISTANCE)
         )
         axis_group.addAction(self.action_distance)
-        view_menu.addAction(self.action_distance)
+        menu.addAction(self.action_distance)
 
         self.action_time = QtGui.QAction(strings.ACTION_AXIS_TIME, self)
         self.action_time.setCheckable(True)
+        self.action_time.setToolTip(strings.ACTION_AXIS_TIME_BLOCKED)
         self.action_time.triggered.connect(
             lambda: self.chart.set_axis_mode(AxisMode.TIME)
         )
         axis_group.addAction(self.action_time)
-        view_menu.addAction(self.action_time)
+        menu.addAction(self.action_time)
+
+    def _build_channel_actions(self, menu: QtWidgets.QMenu) -> None:
+        channels = menu.addMenu(strings.MENU_CHANNELS)
+        self.channel_actions: dict[str, QtGui.QAction] = {}
+
+        for spec in ROW_SPECS:
+            action = QtGui.QAction(spec.axis_label, self)
+            action.setCheckable(True)
+            action.setChecked(self.chart.is_row_enabled(spec.key))
+            action.toggled.connect(
+                lambda checked, key=spec.key: self.chart.set_row_enabled(key, checked)
+            )
+            channels.addAction(action)
+            self.channel_actions[spec.key] = action
+
+    def _build_comparison_actions(self, menu: QtWidgets.QMenu) -> None:
+        compare = menu.addMenu(strings.MENU_COMPARE)
+        group = QtGui.QActionGroup(self)
+
+        self.comparison_actions: dict[ComparisonMode, QtGui.QAction] = {}
+        for mode, label in (
+            (ComparisonMode.NONE, strings.ACTION_COMPARE_NONE),
+            (ComparisonMode.SESSION_BEST, strings.ACTION_COMPARE_BEST),
+            (ComparisonMode.PINNED, strings.ACTION_COMPARE_PINNED),
+        ):
+            action = QtGui.QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(mode is self._mode)
+            action.triggered.connect(
+                lambda _checked, m=mode: self.set_comparison_mode(m)
+            )
+            group.addAction(action)
+            compare.addAction(action)
+            self.comparison_actions[mode] = action
+
+        compare.addSeparator()
+        pin = QtGui.QAction(strings.ACTION_PIN_REFERENCE, self)
+        pin.setShortcut(QtGui.QKeySequence("Ctrl+R"))
+        pin.triggered.connect(self.pin_current_lap)
+        compare.addAction(pin)
 
     # -- catalog -----------------------------------------------------------
 
@@ -198,79 +340,218 @@ class MainWindow(QtWidgets.QMainWindow):
                 self, strings.DIALOG_IMPORT_FAILED_TITLE, "\n".join(failures[:10])
             )
 
+    # -- comparison --------------------------------------------------------
+
+    def set_comparison_mode(self, mode: ComparisonMode) -> None:
+        """Change what the selected lap is drawn against, and redraw."""
+        self._mode = mode
+        if mode is ComparisonMode.PINNED and self._pinned is None:
+            self.statusBar().showMessage(strings.STATUS_NO_REFERENCE_PINNED)
+        if self._selection is not None:
+            self.show_lap(self._selection)
+
+    def pin_current_lap(self) -> None:
+        """Pin the lap on screen as the benchmark every other lap is measured
+        against, and switch to that mode."""
+        if self._selection is None:
+            return
+        self._pinned = self._selection
+        self.statusBar().showMessage(
+            strings.STATUS_REFERENCE_PINNED.format(number=self._selection.lap_number)
+        )
+        self.comparison_actions[ComparisonMode.PINNED].setChecked(True)
+        self.set_comparison_mode(ComparisonMode.PINNED)
+
+    def _benchmark_selection(self, selection: LapSelection) -> LapSelection | None:
+        """Which lap the selected one is compared against, or None."""
+        if self._mode is ComparisonMode.NONE:
+            return None
+
+        if self._mode is ComparisonMode.PINNED:
+            pinned = self._pinned
+            if pinned is None:
+                return None
+            if (pinned.session_id == selection.session_id
+                    and pinned.lap_index == selection.lap_index):
+                return None
+            return pinned
+
+        # SESSION_BEST: read from the already-open session's lap list.
+        opened = self._sessions.get(selection)
+        best = opened.best_comparable_lap(exclude_index=selection.lap_index)
+        if best is None:
+            return None
+        return LapSelection(
+            session_id=selection.session_id,
+            source_path=selection.source_path,
+            lap_index=best.index,
+            lap_number=best.number,
+            track_name=selection.track_name,
+            car_name=selection.car_name,
+            time_s=best.time_s,
+            is_comparable=True,
+            session_started_at=selection.session_started_at,
+        )
+
     # -- showing a lap -----------------------------------------------------
 
     def show_lap(self, selection: LapSelection) -> None:
-        """Load and draw the chosen lap."""
+        """Load and draw the chosen lap, with its comparison."""
         started = time.perf_counter()
+        self._selection = selection
         self.statusBar().showMessage(
             strings.STATUS_LOADING.format(name=Path(selection.source_path).name)
         )
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:
-            opened = self._ensure_open(selection)
-            if opened is None:
-                return
-
-            # Before analysing: a session whose clock was corrected must show
-            # the banner whether or not this particular lap can be drawn.
-            self._update_warnings(opened.session)
-
-            analysis = opened.analysis_for(selection.lap_index)
-            if analysis is None:
-                self.chart.clear()
-                self.statusBar().showMessage(strings.CHART_NO_DATA)
-                return
-
-            self.chart.show_lap(
-                analysis.grid_m, analysis.elapsed_s, analysis.speed_ms,
-                title=f"{selection.track_name} · "
-                      f"{strings.BROWSER_LAP_LABEL.format(number=selection.lap_number)} · "
-                      f"{format_lap_time(analysis.time_s)}",
-            )
-            self.setWindowTitle(strings.WINDOW_TITLE_WITH_SESSION.format(
-                track=selection.track_name, car=selection.car_name or "?"
-            ))
-
-            self.statusBar().showMessage(strings.STATUS_LAP_LOADED.format(
-                number=selection.lap_number,
-                time=format_lap_time(analysis.time_s),
-                length=analysis.length_m,
-                n_corners=len(analysis.corners),
-                elapsed=(time.perf_counter() - started) * 1000.0,
-            ))
+            self._show_lap(selection, started)
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
 
-    def _ensure_open(self, selection: LapSelection) -> OpenSession | None:
-        """Open the selection's session, reusing it when it is already open."""
-        if self._open is not None and self._open.session_id == selection.session_id:
-            return self._open
-
-        if self._open is not None:
-            self._open.close()
-            self._open = None
+    def _show_lap(self, selection: LapSelection, started: float) -> None:
+        notes: list[str] = []
 
         try:
-            track_length = None
-            with catalog.connect() as con:
-                track_length = catalog.track_length(con, selection.track_name)
-            session = load_session(selection.source_path, with_hash=False)
+            opened = self._sessions.get(selection)
         except TelemetryError as exc:
-            logger.error("Could not open %s: %s", selection.source_path, exc)
+            self._fail(selection, exc)
+            return
+
+        # Before analysing: a session whose clock was corrected must show the
+        # banner whether or not this particular lap can be drawn.
+        notes.extend(opened.session.warnings)
+
+        primary = opened.analysis_for(selection.lap_index)
+        if primary is None:
             self.chart.clear()
-            self.statusBar().showMessage(str(exc))
-            self.warning_banner.setText(str(exc))
-            self.warning_banner.show()
-            return None
+            self._set_warnings(notes)
+            self.statusBar().showMessage(strings.CHART_NO_DATA)
+            return
 
-        self._open = OpenSession(selection.session_id, session, track_length)
-        return self._open
+        benchmark, benchmark_selection = self._load_benchmark(selection, notes)
 
-    def _update_warnings(self, session: Session) -> None:
-        """Show the session's warnings, the time-base correction above all."""
-        if session.warnings:
-            self.warning_banner.setText("  ".join(session.warnings))
+        delta = None
+        if benchmark is not None:
+            delta = pipeline.delta_between(benchmark, primary)
+
+        self.chart.show_laps(
+            primary=_trace(
+                strings.CHART_LEGEND_PRIMARY.format(
+                    number=selection.lap_number,
+                    time=format_lap_time(primary.time_s),
+                ),
+                primary,
+            ),
+            benchmark=None if benchmark is None else _trace(
+                strings.CHART_LEGEND_BENCHMARK.format(
+                    number=benchmark_selection.lap_number,
+                    time=format_lap_time(benchmark.time_s),
+                    gap=format_gap(delta.final_delta_s),
+                ),
+                benchmark,
+            ),
+            delta_grid_m=None if delta is None else delta.grid_m,
+            delta_s=None if delta is None else delta.delta_s,
+        )
+        self._sync_actions(comparing=benchmark is not None)
+        self._set_warnings(notes)
+
+        self.setWindowTitle(strings.WINDOW_TITLE_WITH_SESSION.format(
+            track=selection.track_name, car=selection.car_name or "?"
+        ))
+        self._report(selection, primary, benchmark_selection, delta, started)
+
+    def _load_benchmark(
+        self, selection: LapSelection, notes: list[str]
+    ) -> tuple[pipeline.LapAnalysis | None, LapSelection | None]:
+        """The benchmark lap's analysis, refusing comparisons that cannot mean
+        anything."""
+        benchmark_selection = self._benchmark_selection(selection)
+        if benchmark_selection is None:
+            return None, None
+
+        # A distance grid only compares two laps if they ran the same track.
+        # 4 000 m into Monza and 4 000 m into Le Mans are different corners, and
+        # the delta between them would be a number with no referent.
+        if benchmark_selection.track_name != selection.track_name:
+            notes.append(strings.WARN_COMPARE_DIFFERENT_TRACK.format(
+                track_a=selection.track_name, track_b=benchmark_selection.track_name
+            ))
+            return None, None
+
+        if (benchmark_selection.car_name or "?") != (selection.car_name or "?"):
+            # Not refused: comparing two cars around one circuit is a legitimate
+            # thing to want. Only flagged, because the delta then measures the
+            # car as much as the driving.
+            notes.append(strings.WARN_COMPARE_DIFFERENT_CAR.format(
+                car_a=selection.car_name or "?",
+                car_b=benchmark_selection.car_name or "?",
+            ))
+
+        try:
+            opened = self._sessions.get(benchmark_selection)
+        except TelemetryError as exc:
+            logger.warning("Could not open the reference session: %s", exc)
+            return None, None
+
+        analysis = opened.analysis_for(benchmark_selection.lap_index)
+        return (analysis, benchmark_selection) if analysis is not None else (None, None)
+
+    def _report(
+        self,
+        selection: LapSelection,
+        primary: pipeline.LapAnalysis,
+        benchmark_selection: LapSelection | None,
+        delta,
+        started: float,
+    ) -> None:
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+        if delta is None or benchmark_selection is None:
+            self.statusBar().showMessage(strings.STATUS_LAP_LOADED.format(
+                number=selection.lap_number,
+                time=format_lap_time(primary.time_s),
+                length=primary.length_m,
+                n_corners=len(primary.corners),
+                elapsed=elapsed_ms,
+            ))
+            return
+
+        self.statusBar().showMessage(strings.STATUS_LAP_COMPARED.format(
+            number=selection.lap_number,
+            time=format_lap_time(primary.time_s),
+            gap=format_gap(delta.final_delta_s),
+            reference=benchmark_selection.lap_number,
+            loss=format_gap(delta.worst_loss_s),
+            loss_at=delta.worst_loss_distance_m,
+            elapsed=elapsed_ms,
+        ))
+
+    def _sync_actions(self, *, comparing: bool) -> None:
+        """Keep the menu honest about what is currently possible.
+
+        The time axis is disabled while two laps are drawn: at equal elapsed
+        times they are at different points of the circuit, so an overlay on that
+        axis would invite a comparison that says nothing.
+        """
+        self.action_time.setEnabled(not comparing)
+        if comparing and self.chart.axis_mode is AxisMode.TIME:
+            self.chart.set_axis_mode(AxisMode.DISTANCE)
+            self.action_distance.setChecked(True)
+
+        available = self.chart.available_rows()
+        for key, action in self.channel_actions.items():
+            action.setEnabled(key in available)
+
+    def _fail(self, selection: LapSelection, exc: Exception) -> None:
+        logger.error("Could not open %s: %s", selection.source_path, exc)
+        self.chart.clear()
+        self.statusBar().showMessage(str(exc))
+        self._set_warnings([str(exc)])
+
+    def _set_warnings(self, notes: list[str]) -> None:
+        if notes:
+            self.warning_banner.setText("  ".join(notes))
             self.warning_banner.show()
         else:
             self.warning_banner.hide()
@@ -278,7 +559,19 @@ class MainWindow(QtWidgets.QMainWindow):
     # -- lifecycle ---------------------------------------------------------
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        if self._open is not None:
-            self._open.close()
-            self._open = None
+        self._sessions.close_all()
         super().closeEvent(event)
+
+
+def _trace(label: str, analysis: pipeline.LapAnalysis) -> LapTrace:
+    """Turn an analysed lap into what the chart draws.
+
+    The chart layer takes numpy arrays and a label, nothing else - that is what
+    lets it be tested without a session file.
+    """
+    return LapTrace(
+        label=label,
+        grid_m=analysis.grid_m,
+        elapsed_s=analysis.elapsed_s,
+        channels=analysis.channels,
+    )

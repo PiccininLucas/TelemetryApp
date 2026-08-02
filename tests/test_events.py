@@ -199,3 +199,48 @@ def test_real_event_timestamps_share_the_gps_clock(real_session_con):
         assert series.times[-1] <= base.t_end + 1e-3, f"{name} ends after the clock"
 
     assert checked, "expected at least one event channel in a real session"
+
+
+# --------------------------------------------------------------------------- #
+# Session.channel_times
+# --------------------------------------------------------------------------- #
+
+def test_channel_times_of_an_event_channel_come_from_its_ts_column(
+    synthetic_session,
+):
+    """Regression: event channels were given the same implicit `t[i] = i/f`
+    grid as continuous ones.
+
+    Event rows are written only when the value *changes*, so they are irregular
+    by construction. Spreading them uniformly moved every one of them - on a
+    real race it placed `Gear`'s 962 shift events 1.5 s apart instead of at the
+    instants they happened, and put the car in neutral for half of every lap.
+    """
+    from lmu_telemetry.ingest.session_loader import load_session
+
+    with load_session(synthetic_session, with_hash=False) as session:
+        times = session.channel_times("Gear")
+        assert times.tolist() == [0.0, 0.3, 0.7]
+
+        # The continuous channels keep the implicit grid: 10 samples at 10 Hz.
+        speed_times = session.channel_times("Ground Speed")
+        assert len(speed_times) == 10
+        assert speed_times[1] - speed_times[0] == pytest.approx(0.1)
+
+
+def test_event_channel_resampling_holds_the_gear_between_shifts(
+    synthetic_session,
+):
+    """A gear is whatever was last selected, so it is held, never interpolated.
+    Interpolating would invent a gear 2.5 halfway through a shift."""
+    from lmu_telemetry.ingest import time_base
+    from lmu_telemetry.ingest.session_loader import load_session
+
+    with load_session(synthetic_session, with_hash=False) as session:
+        grid = np.array([0.0, 0.15, 0.3, 0.5, 0.7, 0.9])
+        held = time_base.resample_to_grid(
+            session.channel("Gear"), session.channel_times("Gear"),
+            grid, discrete=True,
+        )
+
+    assert held.tolist() == [1, 1, 2, 2, 3, 3]

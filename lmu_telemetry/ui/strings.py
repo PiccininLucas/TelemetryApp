@@ -125,12 +125,22 @@ WINDOW_TITLE_WITH_SESSION = "{track} · {car} — LMU Telemetry Analyzer"
 
 MENU_FILE = "&Arquivo"
 MENU_VIEW = "&Exibir"
+MENU_CHANNELS = "&Canais"
+MENU_COMPARE = "&Comparação"
 ACTION_IMPORT = "&Importar sessão..."
 ACTION_IMPORT_FOLDER = "Importar &pasta..."
 ACTION_REFRESH = "&Atualizar catálogo"
 ACTION_QUIT = "&Sair"
 ACTION_AXIS_DISTANCE = "Eixo X: &distância"
 ACTION_AXIS_TIME = "Eixo X: &tempo"
+ACTION_AXIS_TIME_BLOCKED = (
+    "Duas voltas só podem ser comparadas no eixo de distância. Escolha "
+    "\"Sem comparação\" para liberar o eixo de tempo."
+)
+ACTION_COMPARE_NONE = "&Sem comparação"
+ACTION_COMPARE_BEST = "Comparar com a &melhor volta da sessão"
+ACTION_COMPARE_PINNED = "Comparar com a volta &fixada"
+ACTION_PIN_REFERENCE = "&Fixar volta atual como referência"
 
 DIALOG_IMPORT_TITLE = "Escolha uma sessão de telemetria"
 DIALOG_IMPORT_FOLDER_TITLE = "Escolha a pasta Telemetry"
@@ -145,7 +155,13 @@ STATUS_LAP_LOADED = (
     "Volta {number} · {time} · {length:.0f} m · {n_corners} curvas · "
     "carregada em {elapsed:.0f} ms"
 )
+STATUS_LAP_COMPARED = (
+    "Volta {number} · {time} · {gap} s vs volta {reference} · "
+    "pior perda {loss} s em {loss_at:.0f} m · carregada em {elapsed:.0f} ms"
+)
 STATUS_NO_SELECTION = "Selecione uma volta na árvore à esquerda."
+STATUS_REFERENCE_PINNED = "Volta {number} fixada como referência."
+STATUS_NO_REFERENCE_PINNED = "Nenhuma volta fixada. Use Exibir ▸ Comparação ▸ Fixar."
 
 # --- Session browser --------------------------------------------------------
 BROWSER_TITLE = "Sessões"
@@ -159,12 +175,46 @@ BROWSER_N_SESSIONS = "{n} sessões"
 BROWSER_N_LAPS = "{n} voltas"
 
 # --- Chart ------------------------------------------------------------------
-CHART_SPEED_TITLE = "Velocidade"
 CHART_AXIS_DISTANCE = "Distância (m)"
 CHART_AXIS_TIME = "Tempo (s)"
-CHART_AXIS_SPEED = "Velocidade (km/h)"
 CHART_NO_DATA = "Nenhuma volta carregada"
-CHART_CURSOR_READOUT = "{distance:.0f} m · {speed:.1f} km/h"
+
+#: Left-axis label of each stacked row. The unit belongs here, never in the
+#: readout, so it is stated once per screen instead of once per sample.
+CHART_ROW_SPEED = "Velocidade (km/h)"
+CHART_ROW_PEDALS = "Pedais (%)"
+CHART_ROW_STEERING = "Volante (%)"
+CHART_ROW_GEAR = "Marcha"
+CHART_ROW_RPM = "Motor (rpm)"
+CHART_ROW_DELTA = "Delta-t (s)"
+
+#: Short names used in the cursor readout, where space is tight.
+CHART_SERIES_SPEED = "vel"
+CHART_SERIES_THROTTLE = "acel"
+CHART_SERIES_BRAKE = "freio"
+CHART_SERIES_STEERING = "volante"
+CHART_SERIES_GEAR = "marcha"
+CHART_SERIES_RPM = "rpm"
+CHART_SERIES_DELTA = "Δt"
+
+CHART_LEGEND_PRIMARY = "Volta {number} · {time}"
+CHART_LEGEND_BENCHMARK = "referência: volta {number} · {time} · {gap} s"
+CHART_LEGEND_NO_BENCHMARK = "sem comparação"
+
+CHART_READOUT_DISTANCE = "{distance:.0f} m"
+CHART_READOUT_TIME = "{time:.2f} s"
+CHART_READOUT_SEPARATOR = " · "
+
+WARN_COMPARE_DIFFERENT_TRACK = (
+    "As duas voltas são de pistas diferentes ({track_a} e {track_b}). "
+    "Comparar em distância exigiria que percorressem o mesmo traçado, então a "
+    "comparação foi desativada."
+)
+WARN_COMPARE_DIFFERENT_CAR = (
+    "As voltas comparadas são de carros diferentes ({car_a} e {car_b}). "
+    "O delta-t continua válido, mas a diferença vem do carro tanto quanto da "
+    "pilotagem."
+)
 
 # --- Import and catalog (scripts/import_session.py) -------------------------
 IMPORT_TITLE = "IMPORTAÇÃO DE SESSÕES"

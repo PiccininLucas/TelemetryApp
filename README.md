@@ -10,10 +10,15 @@ Runs fully offline. The application makes no network calls of any kind.
 
 > Interface is in Portuguese; code, identifiers and documentation are in English.
 
-**Status: phase 5 of 10.** Ingestion, the historical catalog, the analysis layer
-and a working desktop interface. See [Roadmap](#roadmap).
+**Status: phase 6 of 10.** Ingestion, the historical catalog, the analysis layer,
+and a desktop interface that overlays two laps channel by channel with the
+delta-t between them. See [Roadmap](#roadmap).
 
 ![Main window](docs/screenshots/main-window.png)
+
+*Two laps of the same Monza race. Lap 8 is 0.510 s faster overall but loses
+0.187 s at the Variante del Rettifilo — visible as the only red step in the
+delta-t row, at 990 m.*
 
 ---
 
@@ -333,6 +338,42 @@ on the synthetic circuit:
   neighbour. Reading each lap's time through the corner directly and comparing
   against the driver's own best has no such failure mode.
 
+A third came out of drawing the gear trace for the first time in phase 6:
+
+- **Event channels carry their own clock.** Layouts C and D have a `ts` column
+  and are written only when the value *changes*; layouts A and B have no
+  timestamp at all and rely on `t[i] = i/f`. Ingestion was applying the
+  implicit grid to both, which spread `Gear`'s 962 shift events uniformly at
+  1.5 s apart instead of placing them at the instants they happened. Since half
+  of those events are the momentary neutral of a shift, the car appeared to be
+  out of gear for half of every lap. Nothing before phase 6 read an event
+  channel through that path, so nothing caught it.
+
+### Comparing two laps
+
+Comparison happens in the distance domain and nowhere else. Two laps at the
+same *elapsed time* are at different points of the circuit, so any difference
+between them is a statement about nothing. The interface enforces this rather
+than documenting it: the time axis is available for reading a single lap's
+rhythm, and is disabled while two laps are drawn.
+
+The delta is `delta(s) = t_lap(s) − t_reference(s)`, positive when the lap is
+behind. What matters is the **slope**, not the value: a rising delta is where
+time is being lost right now, while a flat delta at a high value is a loss that
+happened earlier and is simply being carried. The row is filled to zero, red
+above and green below, so the eye follows the slope.
+
+A reference lap from a different circuit is refused, because a shared distance
+grid would silently compare Monza's 4 000 m mark with Le Mans's. A reference
+from a different *car* is allowed but flagged — comparing two cars around one
+circuit is a legitimate thing to want, as long as it is clear that the delta
+then measures the car as much as the driving.
+
+One thing the gear trace shows that looks like a fault and is not: it drops to
+neutral for roughly 2 m at every shift. Those are real events — the game logs
+the ~37 ms the dog ring spends out of engagement — and they are left in rather
+than filtered out.
+
 ### Layering
 
 `analysis` imports numpy, scipy and the standard library — nothing else.
@@ -439,7 +480,7 @@ strips those fields and writes a new file rather than modifying the original.
 | 3 | Session cache + historical catalog | ✅ done |
 | 4 | Full analysis layer with unit tests on synthetic data | ✅ done |
 | 5 | Minimal UI: session browser + speed trace | ✅ done |
-| 6 | Synchronised multi-channel charts + delta-t | |
+| 6 | Synchronised multi-channel charts + delta-t | ✅ done |
 | 7 | Track map + g-g diagram | |
 | 8 | Corner table, persistent naming, theoretical ideal lap | |
 | 9 | Consistency panel | |

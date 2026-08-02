@@ -20,6 +20,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from lmu_telemetry.logging_config import get_logger
 from lmu_telemetry.storage import catalog
 from lmu_telemetry.ui import strings, theme
+from lmu_telemetry.ui.formatting import format_lap_time
 
 logger = get_logger(__name__)
 
@@ -46,14 +47,6 @@ class LapSelection:
     time_s: float | None
     is_comparable: bool = False
     session_started_at: datetime | None = None
-
-
-def format_lap_time(seconds: float | None) -> str:
-    """m:ss.mmm, the way a timing screen shows it."""
-    if seconds is None or seconds <= 0:
-        return "--"
-    minutes, remainder = divmod(seconds, 60.0)
-    return f"{int(minutes)}:{remainder:06.3f}"
 
 
 class SessionBrowser(QtWidgets.QWidget):

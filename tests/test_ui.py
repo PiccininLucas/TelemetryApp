@@ -22,10 +22,37 @@ from PySide6 import QtWidgets  # noqa: E402
 from lmu_telemetry.core.models import Lap, LapFlag, SessionInfo  # noqa: E402
 from lmu_telemetry.storage import catalog, paths  # noqa: E402
 from lmu_telemetry.ui import strings, theme  # noqa: E402
-from lmu_telemetry.ui.chart_panel import AxisMode, SpeedChart  # noqa: E402
-from lmu_telemetry.ui.session_browser import (  # noqa: E402
-    SessionBrowser, format_lap_time,
+from lmu_telemetry.ui.chart_panel import (  # noqa: E402
+    ROW_DELTA, ROW_GEAR, ROW_PEDALS, ROW_SPEED, AxisMode, ChartStack, LapTrace, Role,
 )
+from lmu_telemetry.ui.formatting import (  # noqa: E402
+    format_gap, format_lap_time, format_value,
+)
+from lmu_telemetry.ui.session_browser import SessionBrowser  # noqa: E402
+
+
+def make_trace(
+    label: str = "Volta 1",
+    *,
+    n: int = 200,
+    speed_ms: float = 50.0,
+    start_s: float = 0.0,
+) -> LapTrace:
+    """A flat-out lap on a 1 m grid, with every channel the stack can draw."""
+    grid = np.arange(float(n))
+    return LapTrace(
+        label=label,
+        grid_m=grid,
+        elapsed_s=start_s + grid / speed_ms,
+        channels={
+            "Ground Speed": np.full_like(grid, speed_ms),
+            "Throttle Pos": np.full_like(grid, 1.0),
+            "Brake Pos": np.zeros_like(grid),
+            "Steering Pos": np.zeros_like(grid),
+            "Gear": np.full_like(grid, 5.0),
+            "Engine RPM": np.full_like(grid, 7000.0),
+        },
+    )
 
 
 @pytest.fixture(scope="session")
@@ -230,67 +257,224 @@ def test_browser_survives_an_unreadable_catalog(qt_app, tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Speed chart
+# Formatting helpers
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [(1.1610001, "+1.161"), (-0.2836, "-0.284"), (0.0, "+0.000"),
+     (float("nan"), "--"), (None, "--")],
+)
+def test_gap_is_always_signed(seconds, expected):
+    """An unsigned "0.284" next to a lap time is ambiguous in exactly the case
+    that matters most."""
+    assert format_gap(seconds) == expected
+
+
+def test_format_value_survives_gaps_in_the_data():
+    assert format_value(218.44, 1) == "218.4"
+    assert format_value(float("nan"), 1) == "--"
+    assert format_value(None, 0) == "--"
+
+
+# --------------------------------------------------------------------------- #
+# Chart stack
 # --------------------------------------------------------------------------- #
 
 def test_chart_starts_empty(qt_app):
-    chart = SpeedChart()
+    chart = ChartStack()
     assert chart.axis_mode is AxisMode.DISTANCE
+    assert chart.visible_rows() == []  # nothing loaded, so nothing to show
 
 
 def test_chart_converts_speed_to_kmh(qt_app):
     """The application works in SI internally and shows km/h, which is what a
     driver reads."""
-    chart = SpeedChart()
-    grid = np.arange(0.0, 100.0)
-    chart.show_lap(grid, grid / 50.0, np.full_like(grid, 50.0))
+    chart = ChartStack()
+    chart.show_laps(make_trace(speed_ms=50.0))
 
-    _x, y = chart._curve.getData()
+    _x, y = chart._rows[ROW_SPEED].curves[("Ground Speed", Role.PRIMARY)].getData()
     assert y[0] == pytest.approx(180.0)
 
 
-def test_chart_axis_toggle_swaps_the_x_data(qt_app):
-    chart = SpeedChart()
-    distance = np.array([0.0, 100.0, 200.0])
-    elapsed = np.array([0.0, 2.0, 4.0])
-    chart.show_lap(distance, elapsed, np.array([50.0, 50.0, 50.0]))
+def test_chart_converts_pedals_to_percent(qt_app):
+    """Pedals are held as a 0-1 fraction internally; a driver reads percent."""
+    chart = ChartStack()
+    chart.show_laps(make_trace())
 
-    x, _y = chart._curve.getData()
+    _x, y = chart._rows[ROW_PEDALS].curves[("Throttle Pos", Role.PRIMARY)].getData()
+    assert y[0] == pytest.approx(100.0)
+
+
+def test_pedal_row_has_a_fixed_range(qt_app):
+    """Autoscaling would turn a lap that never used more than 40% brake into one
+    that looks like it locked the wheels at every corner."""
+    chart = ChartStack()
+    chart.show_laps(make_trace())
+
+    low, high = chart._rows[ROW_PEDALS].plot.getViewBox().viewRange()[1]
+    assert low == pytest.approx(-3.0)
+    assert high == pytest.approx(103.0)
+
+
+def test_chart_axis_toggle_swaps_the_x_data(qt_app):
+    chart = ChartStack()
+    chart.show_laps(make_trace(n=201, speed_ms=50.0))
+    curve = chart._rows[ROW_SPEED].curves[("Ground Speed", Role.PRIMARY)]
+
+    x, _y = curve.getData()
     assert x[-1] == pytest.approx(200.0)
 
     chart.set_axis_mode(AxisMode.TIME)
-    x, _y = chart._curve.getData()
+    x, _y = curve.getData()
     assert x[-1] == pytest.approx(4.0)
     assert chart.axis_mode is AxisMode.TIME
 
 
-def test_chart_axis_label_follows_the_mode(qt_app):
-    chart = SpeedChart()
+def test_only_the_bottom_row_labels_the_x_axis(qt_app):
+    """Repeating the same numbers under every plot costs the height the traces
+    need and tells the reader nothing new - the axes are linked."""
+    chart = ChartStack()
+    chart.show_laps(make_trace())
+
+    visible = chart.visible_rows()
+    assert len(visible) >= 2
+    labels = [chart._rows[k].plot.getAxis("bottom").labelText for k in visible]
+    assert labels[-1] == strings.CHART_AXIS_DISTANCE
+    assert all(label == "" for label in labels[:-1])
+
+
+def test_rows_share_one_x_range(qt_app):
+    """A braking point is a relationship between rows, so panning one has to
+    move all of them."""
+    chart = ChartStack()
+    chart.show_laps(make_trace())
+    chart.set_row_enabled(ROW_GEAR, True)
+
+    chart._rows[ROW_SPEED].plot.setXRange(40.0, 60.0, padding=0.0)
+    other = chart._rows[ROW_GEAR].plot.getViewBox().viewRange()[0]
+    assert other[0] == pytest.approx(40.0)
+    assert other[1] == pytest.approx(60.0)
+
+
+def test_row_is_hidden_when_the_session_never_recorded_it(qt_app):
+    """An empty steering plot reads as "the driver never steered"."""
+    trace = make_trace()
+    without_steering = LapTrace(
+        label=trace.label, grid_m=trace.grid_m, elapsed_s=trace.elapsed_s,
+        channels={k: v for k, v in trace.channels.items() if k != "Steering Pos"},
+    )
+    chart = ChartStack()
+    chart.show_laps(without_steering)
+
+    assert "steering" not in chart.available_rows()
+    chart.set_row_enabled("steering", True)
+    assert "steering" not in chart.visible_rows()
+
+
+def test_delta_row_appears_only_with_a_comparison(qt_app):
+    chart = ChartStack()
+    chart.show_laps(make_trace())
+    assert ROW_DELTA not in chart.visible_rows()
+
+    grid = np.arange(200.0)
+    chart.show_laps(
+        make_trace("Volta 2"), make_trace("Volta 1"),
+        delta_grid_m=grid, delta_s=grid * 0.001,
+    )
+    assert ROW_DELTA in chart.visible_rows()
+
+
+def test_delta_is_split_at_zero(qt_app):
+    """The sign is the difference between losing and gaining time; a single
+    brush would make a lap that gains 0.4 s look exactly like one that loses
+    it."""
+    chart = ChartStack()
+    grid = np.arange(5.0)
+    delta = np.array([0.0, 0.2, 0.4, -0.1, -0.3])
+    chart.show_laps(
+        make_trace("Volta 2", n=5), make_trace("Volta 1", n=5),
+        delta_grid_m=grid, delta_s=delta,
+    )
+
+    row = chart._rows[ROW_DELTA]
+    _x, loss = row.delta_loss.getData()
+    _x, gain = row.delta_gain.getData()
+    assert list(loss) == [0.0, 0.2, 0.4, 0.0, 0.0]
+    assert list(gain) == [0.0, 0.0, 0.0, -0.1, -0.3]
+
+
+def test_delta_is_not_drawn_on_the_time_axis(qt_app):
+    """Two laps at the same elapsed time are at different places on the
+    circuit, so a delta plotted against time compares nothing."""
+    chart = ChartStack()
+    grid = np.arange(200.0)
+    chart.show_laps(
+        make_trace("Volta 2"), make_trace("Volta 1"),
+        delta_grid_m=grid, delta_s=grid * 0.001,
+    )
     chart.set_axis_mode(AxisMode.TIME)
-    assert strings.CHART_AXIS_TIME in chart.plot.getAxis("bottom").labelText
 
-    chart.set_axis_mode(AxisMode.DISTANCE)
-    assert strings.CHART_AXIS_DISTANCE in chart.plot.getAxis("bottom").labelText
+    _x, y = chart._rows[ROW_DELTA].delta_curve.getData()
+    assert y is None or len(y) == 0
 
 
-def test_chart_clear_removes_the_trace(qt_app):
-    chart = SpeedChart()
-    grid = np.arange(0.0, 100.0)
-    chart.show_lap(grid, grid, np.full_like(grid, 50.0))
+def test_benchmark_is_drawn_alongside_the_primary_lap(qt_app):
+    chart = ChartStack()
+    chart.show_laps(make_trace("Volta 2", speed_ms=40.0),
+                    make_trace("Volta 1", speed_ms=50.0))
+
+    row = chart._rows[ROW_SPEED]
+    _x, primary = row.curves[("Ground Speed", Role.PRIMARY)].getData()
+    _x, benchmark = row.curves[("Ground Speed", Role.BENCHMARK)].getData()
+    assert primary[0] == pytest.approx(144.0)
+    assert benchmark[0] == pytest.approx(180.0)
+
+
+def test_pedal_row_tells_laps_apart_by_line_style_not_colour(qt_app):
+    """Throttle and brake must stay green and red - that reading is instant and
+    universal - so on that row the second lap is dashed instead."""
+    from PySide6 import QtCore as _QtCore
+
+    chart = ChartStack()
+    row = chart._rows[ROW_PEDALS]
+    primary = row.curves[("Throttle Pos", Role.PRIMARY)].opts["pen"]
+    benchmark = row.curves[("Throttle Pos", Role.BENCHMARK)].opts["pen"]
+
+    assert primary.color().name() == benchmark.color().name()
+    assert benchmark.style() == _QtCore.Qt.PenStyle.DashLine
+
+
+def test_chart_clear_removes_every_trace(qt_app):
+    chart = ChartStack()
+    chart.show_laps(make_trace())
     chart.clear()
 
-    x, _y = chart._curve.getData()
+    x, _y = chart._rows[ROW_SPEED].curves[("Ground Speed", Role.PRIMARY)].getData()
     assert x is None or len(x) == 0
+
+
+def test_cursor_readout_reports_both_laps(qt_app):
+    chart = ChartStack()
+    chart.show_laps(make_trace("Volta 2", speed_ms=40.0),
+                    make_trace("Volta 1", speed_ms=50.0))
+
+    text = chart._readout_text(100.0)
+    assert "100 m" in text
+    assert "144.0" in text and "180.0" in text
 
 
 def test_chart_draws_a_full_le_mans_lap(qt_app, synthetic_lap):
     """13 600 points is what a Le Mans lap on a 1 m grid actually is."""
-    chart = SpeedChart()
-    chart.show_lap(
-        synthetic_lap.distance_m, synthetic_lap.times_s, synthetic_lap.speed_ms
-    )
+    chart = ChartStack()
+    chart.show_laps(LapTrace(
+        label="Volta 1",
+        grid_m=synthetic_lap.distance_m,
+        elapsed_s=synthetic_lap.times_s,
+        channels={"Ground Speed": synthetic_lap.speed_ms},
+    ))
 
-    x, y = chart._curve.getData()
+    x, y = chart._rows[ROW_SPEED].curves[("Ground Speed", Role.PRIMARY)].getData()
     assert len(x) == len(synthetic_lap.distance_m)
     assert y.max() == pytest.approx(synthetic_lap.speed_ms.max() * 3.6)
 
@@ -329,7 +513,72 @@ def test_main_window_builds_and_closes_cleanly(qt_app, catalog_with_sessions):
         assert window.windowTitle()
         assert window.splitter.count() == 2
         # No telemetry file exists behind this catalog, so no session opens.
-        assert window._open is None
+        assert len(window._sessions) == 0
+    finally:
+        window.close()
+
+
+def test_session_pool_holds_two_files_and_evicts_the_third(qt_app):
+    """A comparison against a pinned lap from another afternoon needs two files
+    open. Beyond that, holding them open only leaks handles."""
+    from lmu_telemetry.ui.main_window import OpenSession, SessionPool
+
+    class FakeSession:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    pool = SessionPool(capacity=2)
+    opened = {}
+    for name in ("a", "b", "c"):
+        session = FakeSession()
+        opened[name] = session
+        pool._open[name] = OpenSession(name, session, None)
+        pool._touch(name)
+        pool._evict()
+
+    assert len(pool) == 2
+    assert opened["a"].closed          # least recently used
+    assert not opened["c"].closed
+
+
+def test_comparison_mode_survives_having_nothing_to_compare(qt_app,
+                                                            catalog_with_sessions):
+    """Switching to a pinned comparison with nothing pinned must say so, not
+    crash."""
+    from lmu_telemetry.ui.main_window import ComparisonMode, MainWindow
+
+    window = MainWindow()
+    try:
+        # Nothing selected, so the mode change is not followed by a redraw that
+        # would overwrite the message with its own.
+        window._selection = None
+        window.set_comparison_mode(ComparisonMode.PINNED)
+
+        assert window._mode is ComparisonMode.PINNED
+        assert window.statusBar().currentMessage() == (
+            strings.STATUS_NO_REFERENCE_PINNED
+        )
+    finally:
+        window.close()
+
+
+def test_time_axis_is_disabled_while_two_laps_are_drawn(qt_app,
+                                                        catalog_with_sessions):
+    """At equal elapsed times two laps are at different points of the circuit,
+    so an overlay on that axis would invite a comparison that says nothing."""
+    from lmu_telemetry.ui.main_window import MainWindow
+
+    window = MainWindow()
+    try:
+        window._sync_actions(comparing=True)
+        assert not window.action_time.isEnabled()
+        assert window.chart.axis_mode is AxisMode.DISTANCE
+
+        window._sync_actions(comparing=False)
+        assert window.action_time.isEnabled()
     finally:
         window.close()
 
