@@ -230,9 +230,10 @@ on the absent ones; the inspection script flags it loudly if one ever appears.
 
 Requires Python 3.11+ (developed on 3.14).
 
-```bash
+```powershell
 uv venv                                  # or: python -m venv .venv
-uv pip install -r requirements.txt       # or: .venv/bin/pip install -r requirements.txt
+uv pip install -r requirements.txt       # or: .venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\Activate.ps1               # so that `python` and `pytest` mean the venv's
 pytest -q
 ```
 
@@ -244,9 +245,23 @@ folder with `LMU_TELEMETRY_DIR`.
 
 ## Running it
 
-```bash
+The dependencies live in the project's virtual environment, **not** in the
+system Python, so the interpreter matters:
+
+```powershell
+.venv\Scripts\python.exe main.py
+```
+
+or activate the environment first, after which plain `python` is the right one:
+
+```powershell
+.venv\Scripts\Activate.ps1
 python main.py
 ```
+
+Running `python main.py` without activating picks up whichever Python is first
+on PATH — usually the system one — and fails with `No module named 'PySide6'`.
+`main.py` checks for this and prints the command to use instead.
 
 Import sessions from **Arquivo ▸ Importar pasta...**, pointing at the game's
 `UserData/Telemetry`. The tree groups them track ▸ car ▸ session ▸ lap, since
