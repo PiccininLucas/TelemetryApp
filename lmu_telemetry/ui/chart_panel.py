@@ -306,7 +306,11 @@ def _pen(series: Series, role: Role) -> pg.mkPen:
 class ChartStack(QtWidgets.QWidget):
     """Every row, sharing one X axis and one cursor."""
 
-    #: Emitted as the cursor moves, carrying the X position under the mouse.
+    #: Emitted as the cursor moves, carrying the **distance around the lap** in
+    #: metres - not the raw X position. Distance is the coordinate the track map
+    #: and the g-g diagram are indexed by, and it is well defined in both axis
+    #: modes, so converting once here saves every listener from knowing which
+    #: mode the stack happens to be in.
     cursor_moved = QtCore.Signal(float)
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
@@ -559,14 +563,29 @@ class ChartStack(QtWidgets.QWidget):
         index = _nearest_index(self._primary.x_for(self._axis_mode), x)
         if index is None:
             return
-        snapped = float(self._primary.x_for(self._axis_mode)[index])
 
-        for other in self._rows.values():
-            other.cursor.setPos(snapped)
-            other.cursor.setVisible(other.plot.isVisible())
+        self._place_cursor(index)
+        self.cursor_moved.emit(float(self._primary.grid_m[index]))
 
-        self.readout.setText(self._readout_text(snapped))
-        self.cursor_moved.emit(snapped)
+    def set_cursor_distance(self, distance_m: float) -> None:
+        """Move the cursor to a distance around the lap, without re-emitting.
+
+        Called when something else - the track map - drives the cursor. Staying
+        silent is what keeps the two panels from bouncing the signal between
+        them forever.
+        """
+        if self._primary is None:
+            return
+        index = _nearest_index(self._primary.grid_m, distance_m)
+        if index is not None:
+            self._place_cursor(index)
+
+    def _place_cursor(self, index: int) -> None:
+        x = float(self._primary.x_for(self._axis_mode)[index])
+        for row in self._rows.values():
+            row.cursor.setPos(x)
+            row.cursor.setVisible(row.plot.isVisible())
+        self.readout.setText(self._readout_text(x))
 
     def _hide_cursor(self) -> None:
         for row in self._rows.values():

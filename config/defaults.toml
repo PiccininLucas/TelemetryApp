@@ -87,6 +87,21 @@ coast_throttle_max = 0.05
 # rise back above the corner threshold and are reported as a single corner.
 split_prominence_fraction = 0.08
 
+[analysis.delta]
+# The delta between two laps is smooth; its derivative on a 1 m grid is not.
+# Smoothing before differentiating is what makes "where am I losing time"
+# readable instead of a sign that flips every few metres. 25 m is well below the
+# length of any braking zone, so a real loss stays where it happened.
+smoothing_window_m = 25.0
+
+# Rate of loss, in seconds per kilometre, above which a stretch of track is
+# marked on the map. Below the mild threshold the difference is within the
+# repeatability of two laps by the same driver and means nothing.
+#
+# For scale: losing 0.2 s over a 100 m braking zone is 2 s/km.
+mild_threshold_s_per_km = 0.5
+strong_threshold_s_per_km = 2.0
+
 [analysis.ideal_lap]
 # Segment boundaries sit midway along the straight between one corner and the
 # next, never at an apex, so braking, apex and exit stay in one segment.

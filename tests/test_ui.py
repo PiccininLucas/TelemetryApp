@@ -511,7 +511,7 @@ def test_main_window_builds_and_closes_cleanly(qt_app, catalog_with_sessions):
     window = MainWindow()
     try:
         assert window.windowTitle()
-        assert window.splitter.count() == 2
+        assert window.splitter.count() == 3  # browser, traces, side panels
         # No telemetry file exists behind this catalog, so no session opens.
         assert len(window._sessions) == 0
     finally:
@@ -590,3 +590,196 @@ def test_reference_and_comparison_traces_are_distinguishable():
     reference = int(theme.TRACE_REFERENCE[1:], 16)
     comparison = int(theme.TRACE_COMPARISON[1:], 16)
     assert abs(reference - comparison) > 0x100000
+
+
+# --------------------------------------------------------------------------- #
+# Track map
+# --------------------------------------------------------------------------- #
+
+def make_square_path(n: int = 400):
+    """A closed rectangular path, so the map has something with a real shape."""
+    side = n // 4
+    x = np.concatenate([
+        np.linspace(0, 300, side), np.full(side, 300.0),
+        np.linspace(300, 0, side), np.zeros(side),
+    ])
+    y = np.concatenate([
+        np.zeros(side), np.linspace(0, 200, side),
+        np.full(side, 200.0), np.linspace(200, 0, side),
+    ])
+    return x, y, np.arange(float(len(x)))
+
+
+def test_runs_of_splits_a_class_array_into_maximal_runs():
+    from lmu_telemetry.ui.track_map import _runs_of
+
+    assert _runs_of(np.array([1, 1, 0, 0, 0, -1])) == [
+        (0, 2, 1), (2, 5, 0), (5, 6, -1),
+    ]
+    assert _runs_of(np.array([])) == []
+    assert _runs_of(np.array([3, 3, 3])) == [(0, 3, 3)]
+
+
+def test_map_draws_one_polyline_per_colour_run(qt_app):
+    """A 13 600-point lap as coloured points would be 13 600 items; as runs of
+    constant colour it is a few hundred."""
+    from lmu_telemetry.ui.track_map import TrackMap
+
+    x, y, grid = make_square_path()
+    states = np.ones(len(x), dtype=np.int8)
+    states[100:150] = -1     # braking
+    states[150:160] = 0      # coasting
+
+    track_map = TrackMap()
+    track_map.show_path(x, y, grid, pedal_states=states)
+
+    assert len(track_map._runs) == 4  # throttle, brake, coast, throttle
+
+
+def test_map_runs_overlap_by_one_point(qt_app):
+    """Without the overlap the path shows a gap at every colour change, which
+    on a pedal map is every braking point."""
+    from lmu_telemetry.ui.track_map import TrackMap
+
+    x, y, grid = make_square_path()
+    states = np.ones(len(x), dtype=np.int8)
+    states[100:] = -1
+
+    track_map = TrackMap()
+    track_map.show_path(x, y, grid, pedal_states=states)
+
+    first_x, _ = track_map._runs[0].getData()
+    second_x, _ = track_map._runs[1].getData()
+    assert first_x[-1] == pytest.approx(second_x[0])
+
+
+def test_map_falls_back_when_the_delta_colouring_has_no_data(qt_app):
+    """The mode may have been left on delta by a lap that had a comparison."""
+    from lmu_telemetry.ui.track_map import MapColour, TrackMap
+
+    x, y, grid = make_square_path()
+    states = np.ones(len(x), dtype=np.int8)
+
+    track_map = TrackMap()
+    track_map.show_path(x, y, grid, pedal_states=states,
+                        loss_classes=np.zeros(len(x), dtype=np.int8))
+    track_map.set_colour_mode(MapColour.DELTA)
+    assert track_map.colour_mode is MapColour.DELTA
+
+    track_map.show_path(x, y, grid, pedal_states=states)
+    assert track_map.colour_mode is MapColour.PEDALS
+
+
+def test_map_keeps_the_circuit_s_aspect_ratio(qt_app):
+    """A circuit stretched to fill the panel is not a circuit."""
+    from lmu_telemetry.ui.track_map import TrackMap
+
+    track_map = TrackMap()
+    assert track_map.plot.getViewBox().state["aspectLocked"] == 1
+
+
+def test_map_cursor_lands_on_the_path_at_a_given_distance(qt_app):
+    from lmu_telemetry.ui.track_map import TrackMap
+
+    x, y, grid = make_square_path()
+    track_map = TrackMap()
+    track_map.show_path(x, y, grid, pedal_states=np.ones(len(x), dtype=np.int8))
+
+    track_map.set_cursor_distance(float(grid[150]))
+
+    cursor_x, cursor_y = track_map._cursor.getData()
+    assert cursor_x[0] == pytest.approx(x[150])
+    assert cursor_y[0] == pytest.approx(y[150])
+
+
+# --------------------------------------------------------------------------- #
+# g-g diagram
+# --------------------------------------------------------------------------- #
+
+def test_gg_panel_draws_the_hull_it_reports(qt_app):
+    """Outlining the hull is what makes the numbers under the plot auditable by
+    eye rather than something the panel asserts."""
+    from lmu_telemetry.analysis import friction
+    from lmu_telemetry.ui.gg_panel import FrictionPanel
+
+    rng = np.random.default_rng(3)
+    angle = rng.uniform(0, 2 * np.pi, 500)
+    radius = np.sqrt(rng.uniform(0, 1, 500))
+    lateral = 2.0 * radius * np.cos(angle)
+    longitudinal = 1.5 * radius * np.sin(angle)
+    envelope = friction.compute_envelope(lateral, longitudinal)
+
+    panel = FrictionPanel()
+    panel.show_envelope(envelope, lateral, longitudinal,
+                        np.arange(float(len(lateral))), 0.42)
+
+    hull_x, _hull_y = panel._hull.getData()
+    assert len(hull_x) == len(envelope.hull_lateral_g)
+    assert f"{envelope.max_lateral_g:.2f}" in panel.summary.text()
+    assert "42%" in panel.detail.text()
+
+
+def test_gg_panel_keeps_equal_axes(qt_app):
+    """One g of braking must be as tall as one g of cornering, or a circular
+    envelope reads as an elliptical one."""
+    from lmu_telemetry.ui.gg_panel import FrictionPanel
+
+    panel = FrictionPanel()
+    assert panel.plot.getViewBox().state["aspectLocked"] == 1
+
+
+def test_gg_cursor_lands_on_the_lap_s_own_samples(qt_app):
+    """The envelope drops low-speed samples, so it no longer lines up with the
+    distance grid; the cursor has to index the unfiltered arrays."""
+    from lmu_telemetry.analysis import friction
+    from lmu_telemetry.ui.gg_panel import FrictionPanel
+
+    grid = np.arange(0.0, 100.0)
+    lateral = np.sin(grid / 10.0)
+    longitudinal = np.cos(grid / 10.0)
+    speed = np.where(grid < 20, 2.0, 60.0)   # the first 20 m are excluded
+    envelope = friction.compute_envelope(lateral, longitudinal, speed)
+
+    panel = FrictionPanel()
+    panel.show_envelope(envelope, lateral, longitudinal, grid, 0.5)
+    panel.set_cursor_distance(50.0)
+
+    x, y = panel._cursor.getData()
+    assert x[0] == pytest.approx(lateral[50])
+    assert y[0] == pytest.approx(longitudinal[50])
+    assert envelope.n_points == 80
+
+
+# --------------------------------------------------------------------------- #
+# Cursor synchronisation
+# --------------------------------------------------------------------------- #
+
+def test_chart_cursor_reports_distance_in_both_axis_modes(qt_app):
+    """Distance is the coordinate the map and the g-g diagram are indexed by,
+    so the stack converts once rather than making every listener know which
+    mode it is in."""
+    chart = ChartStack()
+    chart.show_laps(make_trace(n=201, speed_ms=50.0))
+
+    chart.set_cursor_distance(120.0)
+    x_distance = chart._rows[ROW_SPEED].cursor.value()
+
+    chart.set_axis_mode(AxisMode.TIME)
+    chart.set_cursor_distance(120.0)
+    x_time = chart._rows[ROW_SPEED].cursor.value()
+
+    assert x_distance == pytest.approx(120.0)
+    assert x_time == pytest.approx(120.0 / 50.0)
+
+
+def test_setting_the_cursor_does_not_re_emit(qt_app):
+    """The map drives the chart and the chart drives the map; one of them has
+    to stay silent or the signal bounces between them forever."""
+    chart = ChartStack()
+    chart.show_laps(make_trace())
+
+    emitted = []
+    chart.cursor_moved.connect(emitted.append)
+    chart.set_cursor_distance(50.0)
+
+    assert emitted == []

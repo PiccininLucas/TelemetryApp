@@ -404,6 +404,60 @@ def friction_envelope(
     )
 
 
+def transition_quality(analysis: LapAnalysis) -> float:
+    """How much of the working time has both axes loaded at once, 0 to 1.
+
+    The measurable form of "does this driver blend braking into turning", and
+    the number the hollow in a g-g diagram corresponds to.
+    """
+    if analysis.lateral_g is None or analysis.longitudinal_g is None:
+        return 0.0
+    return friction.transition_quality(analysis.lateral_g, analysis.longitudinal_g)
+
+
+def pedal_states(
+    analysis: LapAnalysis, config: Config | None = None
+) -> np.ndarray | None:
+    """Braking / coasting / on-throttle at each metre of the lap.
+
+    Colours the track map, where coasting stops being a number and becomes a
+    stretch of tarmac. Thresholds come from the corner detector's own coasting
+    band, so "coasting" means the same thing in both places.
+    """
+    if not {"Brake Pos", "Throttle Pos"} <= analysis.channels.keys():
+        return None
+    config = config or load_config()
+    return trackmap.pedal_state(
+        analysis.channels["Brake Pos"],
+        analysis.channels["Throttle Pos"],
+        brake_threshold=float(config.get("analysis.corners.coast_brake_max")),
+        throttle_threshold=float(config.get("analysis.corners.coast_throttle_max")),
+    )
+
+
+def loss_classes_on(
+    grid_m: np.ndarray,
+    result: delta.DeltaResult,
+    config: Config | None = None,
+) -> np.ndarray:
+    """Where a lap gains or loses time, on an arbitrary distance grid.
+
+    The delta is computed on the grid the two laps share, which stops at the
+    shorter of them. The track map needs it on the drawn lap's own grid, so the
+    classes are resampled - held, not interpolated, because they are labels and
+    a class 0.4 means nothing.
+    """
+    config = config or load_config()
+    section = config.section("analysis").get("delta", {})
+    classes = delta.loss_classes(result.delta_s, result.grid_m, **section)
+
+    if not len(classes):
+        return np.zeros(np.shape(grid_m), dtype=np.int8)
+    return resample.resample(
+        classes, result.grid_m, grid_m, discrete=True
+    ).astype(np.int8)
+
+
 def track_paths(
     analysis: LapAnalysis, config: Config | None = None
 ) -> tuple[trackmap.TrackPath | None, trackmap.TrackPath | None]:
@@ -430,3 +484,17 @@ def track_paths(
         )
 
     return gps, integrated
+
+
+def align_paths(
+    gps: trackmap.TrackPath, integrated: trackmap.TrackPath
+) -> trackmap.TrackPath:
+    """The integrated path rotated onto the GPS one, ready to overlay."""
+    return trackmap.align_paths(gps, integrated)
+
+
+def compare_track_paths(
+    gps: trackmap.TrackPath, integrated: trackmap.TrackPath
+) -> trackmap.PathComparison:
+    """How far the reconstruction strays from the measured trace."""
+    return trackmap.compare_paths(gps, integrated)

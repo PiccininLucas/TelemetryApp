@@ -34,7 +34,9 @@ from lmu_telemetry.ui.chart_panel import (
     ROW_SPECS, AxisMode, ChartStack, LapTrace,
 )
 from lmu_telemetry.ui.formatting import format_gap, format_lap_time
+from lmu_telemetry.ui.gg_panel import FrictionPanel
 from lmu_telemetry.ui.session_browser import LapSelection, SessionBrowser
+from lmu_telemetry.ui.track_map import MapColour, TrackMap
 
 logger = get_logger(__name__)
 
@@ -190,9 +192,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chart = ChartStack()
         self.splitter.addWidget(self.chart)
 
+        # The right column: where the lap happened, and how hard the tyres were
+        # worked doing it. Both follow the traces' cursor, and the map drives it
+        # back - picking a corner on the map is how a driver thinks about a lap.
+        self.side = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.track_map = TrackMap()
+        self.friction = FrictionPanel()
+        self.side.addWidget(self.track_map)
+        self.side.addWidget(self.friction)
+        self.side.setSizes([460, 420])
+        self.splitter.addWidget(self.side)
+
+        self.chart.cursor_moved.connect(self._on_cursor_moved)
+        self.track_map.distance_picked.connect(self._on_cursor_moved)
+
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([420, 940])
+        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setSizes([380, 800, 420])
         layout.addWidget(self.splitter, stretch=1)
 
         self.setCentralWidget(central)
@@ -226,6 +243,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_axis_actions(view_menu)
         view_menu.addSeparator()
         self._build_channel_actions(view_menu)
+        self._build_panel_actions(view_menu)
         view_menu.addSeparator()
         self._build_comparison_actions(view_menu)
 
@@ -263,6 +281,43 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             channels.addAction(action)
             self.channel_actions[spec.key] = action
+
+    def _build_panel_actions(self, menu: QtWidgets.QMenu) -> None:
+        panels = menu.addMenu(strings.MENU_PANELS)
+
+        for label, widget in (
+            (strings.ACTION_PANEL_MAP, self.track_map),
+            (strings.ACTION_PANEL_GG, self.friction),
+        ):
+            action = QtGui.QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(True)
+            action.toggled.connect(widget.setVisible)
+            panels.addAction(action)
+
+        panels.addSeparator()
+        colour_group = QtGui.QActionGroup(self)
+        self.map_colour_actions: dict[MapColour, QtGui.QAction] = {}
+        for mode, label in (
+            (MapColour.PEDALS, strings.MAP_COLOUR_PEDALS),
+            (MapColour.DELTA, strings.MAP_COLOUR_DELTA),
+        ):
+            action = QtGui.QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(mode is MapColour.PEDALS)
+            action.triggered.connect(
+                lambda _checked, m=mode: self.track_map.set_colour_mode(m)
+            )
+            colour_group.addAction(action)
+            panels.addAction(action)
+            self.map_colour_actions[mode] = action
+
+        panels.addSeparator()
+        self.action_integrated = QtGui.QAction(strings.MAP_SHOW_INTEGRATED, self)
+        self.action_integrated.setCheckable(True)
+        self.action_integrated.setToolTip(strings.MAP_INTEGRATED_UNAVAILABLE)
+        self.action_integrated.toggled.connect(self.track_map.set_integrated_visible)
+        panels.addAction(self.action_integrated)
 
     def _build_comparison_actions(self, menu: QtWidgets.QMenu) -> None:
         compare = menu.addMenu(strings.MENU_COMPARE)
@@ -423,7 +478,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         primary = opened.analysis_for(selection.lap_index)
         if primary is None:
-            self.chart.clear()
+            self._clear_panels()
             self._set_warnings(notes)
             self.statusBar().showMessage(strings.CHART_NO_DATA)
             return
@@ -453,6 +508,7 @@ class MainWindow(QtWidgets.QMainWindow):
             delta_grid_m=None if delta is None else delta.grid_m,
             delta_s=None if delta is None else delta.delta_s,
         )
+        self._show_side_panels(primary, delta)
         self._sync_actions(comparing=benchmark is not None)
         self._set_warnings(notes)
 
@@ -496,6 +552,73 @@ class MainWindow(QtWidgets.QMainWindow):
 
         analysis = opened.analysis_for(benchmark_selection.lap_index)
         return (analysis, benchmark_selection) if analysis is not None else (None, None)
+
+    def _show_side_panels(self, primary: pipeline.LapAnalysis, delta) -> None:
+        """Fill the track map and the g-g diagram for the lap on screen."""
+        self._show_track_map(primary, delta)
+        self._show_friction(primary)
+
+    def _show_track_map(self, primary: pipeline.LapAnalysis, delta) -> None:
+        gps, integrated = pipeline.track_paths(primary)
+        if gps is None or not len(gps.x_m):
+            self.track_map.clear()
+            self.action_integrated.setEnabled(False)
+            return
+
+        caption = strings.MAP_EXTENT.format(
+            width=gps.extent_m[0], height=gps.extent_m[1],
+            closure=gps.closure_error_m,
+        )
+
+        self.action_integrated.setEnabled(integrated is not None)
+        if integrated is not None:
+            aligned = pipeline.align_paths(gps, integrated)
+            self.track_map.show_integrated(aligned.x_m, aligned.y_m)
+            comparison = pipeline.compare_track_paths(gps, integrated)
+            caption += "\n" + strings.MAP_INTEGRATED_ERROR.format(
+                mean=comparison.mean_error_m, max=comparison.max_error_m
+            )
+
+        self.track_map.show_path(
+            gps.x_m, gps.y_m, primary.grid_m,
+            pedal_states=pipeline.pedal_states(primary),
+            loss_classes=(None if delta is None
+                          else pipeline.loss_classes_on(primary.grid_m, delta)),
+            caption=caption,
+        )
+
+        # Opening on the delta colouring whenever there is a comparison: it is
+        # the reason the panel exists, and having to find a menu item to see
+        # where the time went makes the map decorative.
+        available = self.track_map.available_modes()
+        preferred = (MapColour.DELTA if MapColour.DELTA in available
+                     else MapColour.PEDALS)
+        self.track_map.set_colour_mode(preferred)
+        for mode, action in self.map_colour_actions.items():
+            action.setEnabled(mode in available)
+            action.setChecked(mode is self.track_map.colour_mode)
+
+    def _show_friction(self, primary: pipeline.LapAnalysis) -> None:
+        envelope = pipeline.friction_envelope(primary)
+        if envelope is None or not envelope.is_valid:
+            self.friction.clear()
+            return
+        self.friction.show_envelope(
+            envelope,
+            primary.lateral_g, primary.longitudinal_g, primary.grid_m,
+            pipeline.transition_quality(primary),
+        )
+
+    def _on_cursor_moved(self, distance_m: float) -> None:
+        """One cursor for the whole window.
+
+        Whichever panel the mouse is over drives the other two, so a point on
+        the speed trace, a point on the circuit and a point in the friction
+        envelope are always the same instant of the lap.
+        """
+        self.chart.set_cursor_distance(distance_m)
+        self.track_map.set_cursor_distance(distance_m)
+        self.friction.set_cursor_distance(distance_m)
 
     def _report(
         self,
@@ -543,9 +666,14 @@ class MainWindow(QtWidgets.QMainWindow):
         for key, action in self.channel_actions.items():
             action.setEnabled(key in available)
 
+    def _clear_panels(self) -> None:
+        self.chart.clear()
+        self.track_map.clear()
+        self.friction.clear()
+
     def _fail(self, selection: LapSelection, exc: Exception) -> None:
         logger.error("Could not open %s: %s", selection.source_path, exc)
-        self.chart.clear()
+        self._clear_panels()
         self.statusBar().showMessage(str(exc))
         self._set_warnings([str(exc)])
 

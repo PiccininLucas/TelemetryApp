@@ -204,3 +204,56 @@ def test_delta_against_a_synthetic_reference_curve():
 
     expected = 1000.0 * (1.0 / 45.0 - 1.0 / 50.0)
     assert result.final_delta_s == pytest.approx(expected, rel=1e-6)
+
+
+# --------------------------------------------------------------------------- #
+# Where the time moved
+# --------------------------------------------------------------------------- #
+
+def test_gain_rate_survives_a_noisy_delta():
+    """Two laps sampled a metre apart differ by microseconds; differentiating
+    that raw makes the sign flip every few metres."""
+    grid = np.arange(0.0, 1000.0)
+    rng = np.random.default_rng(7)
+    # A clean 1 s loss over the whole lap, plus sub-millisecond sampling noise.
+    clean = grid * 0.001
+    noisy = clean + rng.normal(0.0, 2e-4, grid.size)
+
+    smoothed = delta.smoothed_gain_rate(noisy, grid, smoothing_window_m=25.0)
+    raw = np.gradient(noisy, grid) * 1000.0
+
+    # The true rate is 1 s/km everywhere.
+    assert smoothed.mean() == pytest.approx(1.0, abs=0.05)
+    assert np.abs(smoothed - 1.0).max() < np.abs(raw - 1.0).max() / 5.0
+    assert np.all(smoothed > 0.0)  # never flips sign; the raw derivative does
+
+
+def test_loss_classes_mark_the_corner_not_the_rest_of_the_lap():
+    """Colouring by the delta's *value* paints the whole second half of the lap
+    red because of one mistake at turn one. The slope marks the corner."""
+    grid = np.arange(0.0, 3000.0)
+    # Flat, then 0.5 s lost over a 150 m braking zone, then flat again.
+    lost = np.clip((grid - 1000.0) / 150.0, 0.0, 1.0) * 0.5
+
+    classes = delta.loss_classes(lost, grid, mild_threshold_s_per_km=0.5,
+                                 strong_threshold_s_per_km=2.0)
+
+    marked = np.flatnonzero(classes < 0)
+    assert marked.size > 0
+    assert 950 < marked[0] < 1050
+    assert 1100 < marked[-1] < 1250
+    # Everything after the mistake is carried, not lost, so it stays neutral.
+    assert np.all(classes[1400:] == 0)
+
+
+def test_loss_classes_are_signed_the_way_the_delta_is():
+    grid = np.arange(0.0, 500.0)
+    assert np.any(delta.loss_classes(grid * 0.01, grid) < 0)    # rising: losing
+    assert np.any(delta.loss_classes(-grid * 0.01, grid) > 0)   # falling: gaining
+    assert np.all(delta.loss_classes(np.zeros_like(grid), grid) == 0)
+
+
+def test_gain_rate_of_a_degenerate_delta():
+    grid = np.arange(0.0, 3.0)
+    assert delta.smoothed_gain_rate(np.array([]), np.array([])).size == 0
+    assert np.all(delta.smoothed_gain_rate(np.zeros(3), grid) == 0.0)

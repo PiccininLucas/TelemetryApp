@@ -205,6 +205,58 @@ CHART_READOUT_DISTANCE = "{distance:.0f} m"
 CHART_READOUT_TIME = "{time:.2f} s"
 CHART_READOUT_SEPARATOR = " · "
 
+# --- Track map --------------------------------------------------------------
+MAP_TITLE = "Traçado"
+MAP_NO_DATA = "Esta sessão não gravou GPS: o traçado não pode ser desenhado."
+MAP_COLOUR_PEDALS = "Cor: &pedais"
+MAP_COLOUR_DELTA = "Cor: &ganho/perda"
+MAP_SHOW_INTEGRATED = "Sobrepor traçado &reconstruído"
+
+MAP_LEGEND_BRAKE = "freio"
+MAP_LEGEND_COAST = "inércia"
+MAP_LEGEND_THROTTLE = "acelerador"
+MAP_LEGEND_LOSS = "perdendo"
+MAP_LEGEND_NEUTRAL = "igual"
+MAP_LEGEND_GAIN = "ganhando"
+
+MAP_EXTENT = "{width:.0f} × {height:.0f} m · fechamento {closure:.1f} m"
+#: Shown when the reconstructed path is overlaid. The reconstruction uses no
+#: position data at all, so the disagreement is the headline number.
+MAP_INTEGRATED_ERROR = (
+    "traçado reconstruído de a_y/V: erro médio {mean:.0f} m, máx {max:.0f} m"
+)
+MAP_INTEGRATED_UNAVAILABLE = (
+    "O traçado reconstruído precisa da aceleração lateral, que não está "
+    "disponível nesta sessão."
+)
+
+# --- g-g diagram ------------------------------------------------------------
+GG_TITLE = "Diagrama g-g"
+GG_AXIS_LATERAL = "Aceleração lateral (g)"
+GG_AXIS_LONGITUDINAL = "Aceleração longitudinal (g)"
+GG_NO_DATA = (
+    "Esta sessão não gravou acelerações: o diagrama g-g não pode ser montado."
+)
+GG_SUMMARY = (
+    "lateral {lateral:.2f} g · frenagem {braking:.2f} g · "
+    "tração {acceleration:.2f} g"
+)
+GG_FILL = "envelope preenchido {fill:.0%} · transições {transitions:.0%}"
+#: The caveat that keeps the fill fraction from being read as a grade.
+GG_FILL_TOOLTIP = (
+    "Preenchimento: área do fecho convexo dividida pela da elipse que os "
+    "próprios extremos deste piloto descrevem. Valores perto de 100% não são "
+    "esperados — a elipse é um limite externo.\n\n"
+    "Transições: fração do tempo em que os dois eixos estão carregados ao "
+    "mesmo tempo, ou seja, o quanto a frenagem é misturada com a curva."
+)
+GG_CURSOR = "{lateral:+.2f} g lat · {longitudinal:+.2f} g long · {total:.2f} g total"
+
+# --- Panels -----------------------------------------------------------------
+MENU_PANELS = "&Painéis"
+ACTION_PANEL_MAP = "&Traçado"
+ACTION_PANEL_GG = "Diagrama &g-g"
+
 WARN_COMPARE_DIFFERENT_TRACK = (
     "As duas voltas são de pistas diferentes ({track_a} e {track_b}). "
     "Comparar em distância exigiria que percorressem o mesmo traçado, então a "

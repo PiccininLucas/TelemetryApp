@@ -10,15 +10,24 @@ Runs fully offline. The application makes no network calls of any kind.
 
 > Interface is in Portuguese; code, identifiers and documentation are in English.
 
-**Status: phase 6 of 10.** Ingestion, the historical catalog, the analysis layer,
-and a desktop interface that overlays two laps channel by channel with the
-delta-t between them. See [Roadmap](#roadmap).
+**Status: phase 7 of 10.** Ingestion, the historical catalog, the analysis layer,
+and a desktop interface that overlays two laps channel by channel, with the
+delta-t between them, the circuit they were driven on, and the grip envelope
+they used. See [Roadmap](#roadmap).
 
 ![Main window](docs/screenshots/main-window.png)
 
 *Two laps of the same Monza race. Lap 8 is 0.510 s faster overall but loses
-0.187 s at the Variante del Rettifilo — visible as the only red step in the
-delta-t row, at 990 m.*
+0.187 s at the Variante del Rettifilo — the only red step in the delta-t row,
+at 990 m, and the only red stretch on the map. The dashed outline behind the
+circuit is the track rebuilt from lateral acceleration alone, with no position
+data: 10 m mean error over a 5.8 km lap.*
+
+![Le Mans](docs/screenshots/le-mans.png)
+
+*The same window at Circuit de la Sarthe. 13 625 m, 4:04.738, and the cursor at
+11 703 m — the Porsche Curves, taken at 196 km/h and 1.4 g with the throttle
+still at 90%.*
 
 ---
 
@@ -374,6 +383,54 @@ neutral for roughly 2 m at every shift. Those are real events — the game logs
 the ~37 ms the dog ring spends out of engagement — and they are left in rather
 than filtered out.
 
+### Where the lap happened
+
+A delta row says a lap lost 0.19 s around 990 m. Translating that into "the
+first chicane" is work the driver should not have to do, so the track map does
+it: the circuit is drawn from the lap's own GPS trace and coloured by where
+time moved. **Coloured by the delta's slope, never its value** — colouring by
+value paints the whole second half of the lap red because of one mistake at
+turn one.
+
+The path is drawn as runs of constant colour, one polyline per run, which keeps
+a 13 600-point Le Mans lap to a few dozen items and draws as a line rather than
+a string of dots at any zoom. Aspect ratio is locked: Monza's bounding box is
+1257 × 2169 m and it has to stay that shape.
+
+A second colouring shows braking, coasting and throttle. Coasting is the one
+worth having on a map: as a number it is 2% of a lap and easy to dismiss, and
+as a stretch of tarmac between the brake release and the throttle it is
+obviously a corner entered too slowly.
+
+The reconstruction built in phase 4 — heading integrated from `omega = a_y / V`,
+using no position data at all — can be overlaid on top, rotated onto the GPS
+trace because its absolute orientation is unknowable. It closes to within 3 m
+over a 5.8 km Monza lap with 10 m mean error, and 37 m mean over Le Mans's
+13.6 km. It is a cross-check on the quasi-steady assumption, not a measurement,
+and is drawn dashed and dim to say so.
+
+### Reading the grip envelope
+
+The g-g diagram is a scatter of lateral against longitudinal acceleration with
+the convex hull outlined over it, on equal axes — one g of braking as tall as
+one g of cornering, or a circular envelope reads as an elliptical one. The
+outline is drawn because the numbers underneath are computed from it, which
+makes them auditable by eye instead of asserted.
+
+The accelerations behind it were verified against two independent derivations
+before the panel was built, because the channels are mislabelled in the file
+and a sign error here is invisible:
+
+| | recorded channel | independent estimate | correlation |
+|---|---|---|---|
+| longitudinal | −2.32 / +1.26 g | `dV/dt`: −2.36 / +0.90 g | 0.9925 |
+| lateral | 2.84 g peak | `V·ω` from wheel speeds: 3.11 g peak | 0.9814 |
+
+A GT3 at Le Mans reaching 2.8 g lateral is above what the real car does. The
+two derivations agree, so that is the simulation's grip level rather than a
+fault in this pipeline — worth knowing before anyone reads the number as a
+real-world figure.
+
 ### Layering
 
 `analysis` imports numpy, scipy and the standard library — nothing else.
@@ -481,7 +538,7 @@ strips those fields and writes a new file rather than modifying the original.
 | 4 | Full analysis layer with unit tests on synthetic data | ✅ done |
 | 5 | Minimal UI: session browser + speed trace | ✅ done |
 | 6 | Synchronised multi-channel charts + delta-t | ✅ done |
-| 7 | Track map + g-g diagram | |
+| 7 | Track map + g-g diagram | ✅ done |
 | 8 | Corner table, persistent naming, theoretical ideal lap | |
 | 9 | Consistency panel | |
 | 10 | Export (PNG/CSV/PDF), demo dataset, docs | |

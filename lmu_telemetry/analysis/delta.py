@@ -21,8 +21,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.signal import savgol_filter
 
 from lmu_telemetry.analysis import resample
+
+#: Loss classes returned by `loss_classes`, from losing hard to gaining hard.
+LOSS_STRONG = -2
+LOSS_MILD = -1
+NEUTRAL = 0
+GAIN_MILD = 1
+GAIN_STRONG = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +163,88 @@ def delta_against_reference_curve(
         reference_time_s=reference_elapsed,
         lap_time_s=lap_elapsed,
     )
+
+
+def smoothed_gain_rate(
+    delta_s: np.ndarray,
+    grid_m: np.ndarray,
+    smoothing_window_m: float = 25.0,
+) -> np.ndarray:
+    """Rate of time loss along the lap, in seconds per kilometre.
+
+    The delta itself is smooth, but its derivative on a 1 m grid is not: two
+    laps sampled a metre apart differ by microseconds, and differentiating that
+    amplifies the noise until the sign flips every few metres. Smoothing the
+    delta *before* differentiating is what makes the result readable.
+
+    Savitzky-Golay rather than a moving average, for the same reason the corner
+    detector uses it: a moving average of a curve with a step in it spreads the
+    step over the whole window, while a local polynomial fit keeps its position.
+
+    Args:
+        delta_s: Time difference at each grid point.
+        grid_m: The distance grid, assumed evenly spaced.
+        smoothing_window_m: Length of the smoothing window. 25 m is well below
+            the length of any braking zone, so a real loss stays where it
+            happened.
+
+    Returns:
+        Seconds lost per kilometre at each point. Positive means losing.
+    """
+    delta = np.asarray(delta_s, dtype=np.float64)
+    grid = np.asarray(grid_m, dtype=np.float64)
+
+    if delta.size < 2 or grid.size != delta.size:
+        return np.zeros_like(delta)
+
+    step_m = float(grid[1] - grid[0]) if grid.size > 1 else 1.0
+    if step_m <= 0:
+        return np.zeros_like(delta)
+
+    # Savitzky-Golay needs an odd window of at least polynomial order + 2.
+    window = int(round(smoothing_window_m / step_m)) | 1
+    window = max(5, min(window, delta.size - (delta.size + 1) % 2))
+
+    if window >= 5 and window <= delta.size:
+        # deriv=1 differentiates the fitted polynomial analytically rather than
+        # differencing the smoothed values, which is both more accurate and
+        # free of the extra noise a second pass would add.
+        rate = savgol_filter(delta, window, 3, deriv=1, delta=step_m)
+    else:
+        rate = np.gradient(delta, grid)
+
+    return rate * 1000.0
+
+
+def loss_classes(
+    delta_s: np.ndarray,
+    grid_m: np.ndarray,
+    smoothing_window_m: float = 25.0,
+    mild_threshold_s_per_km: float = 0.5,
+    strong_threshold_s_per_km: float = 2.0,
+) -> np.ndarray:
+    """Classify each metre of the lap as gaining, neutral or losing.
+
+    The delta's *value* says how far behind the lap is; its *slope* says where
+    that happened. Colouring a track map by the value paints the whole second
+    half of the lap red for one mistake at turn one. Colouring by the slope
+    marks the corner.
+
+    Five classes rather than a continuous gradient: a driver acts on "which
+    corner", and a scale of shades invites reading precision that the
+    lap-to-lap repeatability does not support.
+
+    Returns:
+        Integers in [-2, 2]: negative losing, positive gaining.
+    """
+    rate = smoothed_gain_rate(delta_s, grid_m, smoothing_window_m)
+
+    classes = np.zeros(rate.shape, dtype=np.int8)
+    classes[rate > mild_threshold_s_per_km] = LOSS_MILD
+    classes[rate > strong_threshold_s_per_km] = LOSS_STRONG
+    classes[rate < -mild_threshold_s_per_km] = GAIN_MILD
+    classes[rate < -strong_threshold_s_per_km] = GAIN_STRONG
+    return classes
 
 
 def time_lost_between(

@@ -292,6 +292,20 @@ def compare_paths(gps: TrackPath, integrated: TrackPath) -> PathComparison:
     )
 
 
+def align_paths(gps: TrackPath, integrated: TrackPath) -> TrackPath:
+    """Rotate the integrated path onto the GPS one, for drawing them together.
+
+    The reconstruction's absolute orientation is arbitrary - the initial
+    heading is unknowable from the data - so an unaligned overlay shows a
+    rotation that is not an error. Aligning first leaves only what the method
+    genuinely got wrong on screen.
+    """
+    if len(gps.x_m) != len(integrated.x_m) or len(gps.x_m) < 2:
+        return integrated
+    x, y = _align(gps, integrated)
+    return TrackPath(x_m=x, y_m=y)
+
+
 def _align(gps: TrackPath, integrated: TrackPath) -> tuple[np.ndarray, np.ndarray]:
     """Rotate the integrated path onto the GPS path about their shared origin.
 
