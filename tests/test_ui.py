@@ -922,3 +922,158 @@ def test_zoom_to_a_corner_leaves_room_either_side(qt_app):
     low, high = chart._rows[ROW_SPEED].plot.getViewBox().viewRange()[0]
     assert low == pytest.approx(370.0)
     assert high == pytest.approx(530.0)
+
+
+# --------------------------------------------------------------------------- #
+# Consistency panel
+# --------------------------------------------------------------------------- #
+
+def make_report(*, drift: bool = False, excluded: bool = False):
+    from lmu_telemetry.analysis.consistency import (
+        ConsistencyReport, CornerConsistency, ExcludedLap, Exclusion,
+    )
+
+    braking = ((480.0, 486.0, 491.0, 497.0, 503.0) if drift
+               else (500.0, 480.0, 510.0, 490.0, 505.0))
+    return ConsistencyReport(
+        corners=[
+            CornerConsistency(
+                corner_index=0, corner_label="Parabolica",
+                apex_distance_m=5186.0, n_laps=5,
+                braking_point_std_m=float(np.std(braking, ddof=1)),
+                minimum_speed_std_ms=1.8, throttle_point_std_m=6.0,
+                braking_points_m=braking,
+                minimum_speeds_ms=(38.0, 39.0, 40.0, float("nan"), 41.0),
+                throttle_points_m=(5250.0,) * 5,
+                estimated_time_lost_s=0.31,
+            ),
+            CornerConsistency(
+                corner_index=1, corner_label="Ascari",
+                apex_distance_m=3950.0, n_laps=5,
+                braking_point_std_m=3.0, minimum_speed_std_ms=0.4,
+                throttle_point_std_m=2.0,
+                braking_points_m=(3800.0,) * 5,
+                minimum_speeds_ms=(35.0,) * 5,
+                throttle_points_m=(4000.0,) * 5,
+                estimated_time_lost_s=0.08,
+            ),
+        ],
+        lap_indices=(2, 3, 4, 8, 9),
+        excluded_laps=(
+            {11: ExcludedLap(11, Exclusion.TOO_SLOW, 3.599)} if excluded else {}
+        ),
+        lap_time_std_s=0.42,
+        median_lap_time_s=108.594,
+    )
+
+
+def test_consistency_opens_on_the_worst_corner(qt_app):
+    """The ranking is the deliverable; leaving the plot empty until the user
+    clicks wastes the answer."""
+    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+
+    panel = ConsistencyPanel()
+    panel.show_report(make_report(), [2, 3, 4, 8, 9])
+
+    assert panel.table.currentRow() == 0
+    assert panel.table.item(0, 0).text() == "Parabolica"
+    x, _y = panel._series.getData()
+    assert len(x) == 5
+
+
+def test_consistency_plot_is_indexed_by_lap_number(qt_app):
+    """A point on the chart has to be attributable to a lap in the tree."""
+    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+
+    panel = ConsistencyPanel()
+    panel.show_report(make_report(), [2, 3, 4, 8, 9])
+
+    x, _y = panel._series.getData()
+    assert [int(v) for v in x] == [2, 3, 4, 8, 9]
+
+
+def test_consistency_plot_drops_gaps_rather_than_zeroing_them(qt_app):
+    """A lap that never braked here has no braking point, and plotting it at
+    zero would invent an outlier."""
+    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+
+    panel = ConsistencyPanel()
+    panel.show_report(make_report(), [2, 3, 4, 8, 9])
+    panel.metric_selector.setCurrentIndex(1)          # minimum speed, has a NaN
+
+    x, y = panel._series.getData()
+    assert len(x) == 4
+    assert [int(v) for v in x] == [2, 3, 4, 9]
+    assert y.min() > 100.0                             # converted to km/h
+
+
+def test_consistency_names_the_pattern(qt_app):
+    """A drift and a scatter have the same standard deviation and completely
+    different causes."""
+    from lmu_telemetry.ui.consistency_panel import COLUMN_PATTERN, ConsistencyPanel
+
+    panel = ConsistencyPanel()
+    panel.show_report(make_report(drift=True), [2, 3, 4, 8, 9])
+    assert panel.table.item(0, COLUMN_PATTERN).text() == \
+        strings.CONSISTENCY_PATTERN_DRIFT
+
+    panel.show_report(make_report(drift=False), [2, 3, 4, 8, 9])
+    assert panel.table.item(0, COLUMN_PATTERN).text() == \
+        strings.CONSISTENCY_PATTERN_SCATTER
+
+
+def test_consistency_words_the_exclusions(qt_app):
+    """The analysis layer returns a code; this is the only place that turns it
+    into a sentence."""
+    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+
+    panel = ConsistencyPanel()
+    panel.show_report(make_report(excluded=True), [2, 3, 4, 8, 9])
+
+    text = panel.excluded.text()
+    assert "11" in text and "+3.599" in text
+    assert panel.excluded.isVisibleTo(panel)
+
+
+def test_consistency_needs_enough_laps(qt_app):
+    """Dispersion measured over one lap is not dispersion."""
+    from lmu_telemetry.analysis.consistency import ConsistencyReport
+    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+
+    panel = ConsistencyPanel()
+    panel.show_report(
+        ConsistencyReport([], (4,), {}, 0.0, 0.0), [4]
+    )
+
+    assert panel.table.rowCount() == 0
+    assert panel.placeholder.isVisibleTo(panel)
+
+
+def test_selecting_a_corner_moves_the_shared_cursor(qt_app):
+    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+
+    panel = ConsistencyPanel()
+    moved = []
+    panel.corner_selected.connect(moved.append)
+    panel.show_report(make_report(), [2, 3, 4, 8, 9])
+
+    panel.table.selectRow(1)
+    assert moved[-1] == pytest.approx(3950.0)          # Ascari's apex
+
+
+def test_stint_selector_hides_itself_when_there_is_one_stint(qt_app):
+    """A session driven without stopping is one stint, and a selector with one
+    entry is furniture."""
+    from lmu_telemetry.pipeline import StintAnalysis
+    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+
+    panel = ConsistencyPanel()
+    panel.show_stints([StintAnalysis(0, (2, 3, 4, 8, 9), make_report())])
+    assert not panel.stint_selector.isVisibleTo(panel)
+
+    panel.show_stints([
+        StintAnalysis(0, (2, 3, 4, 8, 9), make_report()),
+        StintAnalysis(1, (12, 13, 14, 15, 16), make_report()),
+    ])
+    assert panel.stint_selector.isVisibleTo(panel)
+    assert panel.stint_selector.count() == 2

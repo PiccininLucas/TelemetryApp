@@ -10,11 +10,11 @@ Runs fully offline. The application makes no network calls of any kind.
 
 > Interface is in Portuguese; code, identifiers and documentation are in English.
 
-**Status: phase 8 of 10.** Ingestion, the historical catalog, the analysis layer,
+**Status: phase 9 of 10.** Ingestion, the historical catalog, the analysis layer,
 and a desktop interface that overlays two laps channel by channel, with the
 delta-t between them, the circuit they were driven on, the grip envelope they
-used, and a corner-by-corner debrief against a theoretical ideal lap. See
-[Roadmap](#roadmap).
+used, a corner-by-corner debrief against a theoretical ideal lap, and a
+per-corner repeatability report across a stint. See [Roadmap](#roadmap).
 
 ![Main window](docs/screenshots/main-window.png)
 
@@ -31,6 +31,13 @@ error over a 5.8 km lap.*
 line, and the "A ganhar" column says where those 0.622 s are: 0.258 at the
 Parabolica, 0.169 at Ascari. Five different laps contribute, which is exactly
 how optimistic the target is.*
+
+![Consistency](docs/screenshots/consistency.png)
+
+*Repeatability across the stint, ranked worst first. The Rettifilo costs
+0.747 s a lap — and the plot says why: the braking point marches from 747 m
+down to 724 m over five laps, which is a drift, not scatter, and is far more
+likely to be tyre state than the driver.*
 
 ---
 
@@ -478,6 +485,43 @@ either way — and the dominant term in any delta drawn against it. Using each
 winning lap's own elapsed profile instead took the worst apparent loss against
 the ideal from a fictitious +1.076 s down to the real +0.622 s at the line.
 
+### Consistency
+
+Lap times hide repeatability. Two drivers with the same average lap time can be
+very different: one repeats the same lap, the other alternates a good lap with a
+bad one. Only the second has something easy to gain, and only a per-corner
+measurement shows where.
+
+Per corner, across a stint: the spread of the braking point, of the apex speed
+and of the throttle resumption point, and the time that spread costs — measured
+as `mean(t) − min(t)` through the corner's own stretch of track, not modelled
+from apex speed. Ranked worst first, because a driver cannot work on twelve
+corners at once.
+
+**Beside the ranking, the same corner plotted lap by lap, and the pairing is the
+point.** A drift and a scatter have identical standard deviations and completely
+different causes. A braking point creeping 20 m over five laps is tyre or fuel
+state; the same 20 m jumping about is the driver. The table gives the number,
+the plot shows which it is, and a column states the answer.
+
+Measured per stint. Across a pit stop fuel load and tyre age both step, so the
+dispersion would be reporting the car's state as the driver's repeatability.
+
+Two things the real data corrected:
+
+- **A purely relative lap filter does not survive a change of circuit.** 5% of a
+  108 s Monza lap is 5.4 s; 5% of a 245 s Le Mans lap is 12 s. The relative rule
+  alone admitted a lap taken through the first chicane at 28 km/h — an incident,
+  not driving — and that one lap tripled the corner's reported dispersion
+  (17.1 km/h of apex spread against a true 6.2) and inflated the whole stint's
+  available time from 2.07 to 2.65 s a lap. An absolute allowance alongside it,
+  tighter of the two winning, makes the rule mean the same thing everywhere.
+- **"Is it drifting" is a question about order, not about linearity.** A linear
+  correlation called the Parabolica a drift from the braking points 5007, 4996,
+  5005, 5005, 4955 m — four flat laps and one late outlier, whose magnitude
+  carried the entire statistic. Ranking first makes one stray lap move the
+  answer by one rank instead of by fifty metres.
+
 ### Layering
 
 `analysis` imports numpy, scipy and the standard library — nothing else.
@@ -587,7 +631,7 @@ strips those fields and writes a new file rather than modifying the original.
 | 6 | Synchronised multi-channel charts + delta-t | ✅ done |
 | 7 | Track map + g-g diagram | ✅ done |
 | 8 | Corner table, persistent naming, theoretical ideal lap | ✅ done |
-| 9 | Consistency panel | |
+| 9 | Consistency panel | ✅ done |
 | 10 | Export (PNG/CSV/PDF), demo dataset, docs | |
 
 Deliberately out of scope: live telemetry, HUD/overlay, 3D, tyre degradation

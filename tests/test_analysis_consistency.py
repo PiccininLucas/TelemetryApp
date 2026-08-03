@@ -306,3 +306,110 @@ def test_multiple_pit_stops_give_multiple_stints():
 
 def test_no_laps_gives_no_stints():
     assert consistency.detect_stints([], {}) == []
+
+
+# --------------------------------------------------------------------------- #
+# Lap selection
+# --------------------------------------------------------------------------- #
+
+def test_the_tighter_of_the_two_ceilings_wins():
+    """5% of a 108 s Monza lap is 5.4 s. Against a real race that admitted a lap
+    taken through the first chicane at 28 km/h, which is an incident and not
+    driving, and it tripled the corner's reported dispersion."""
+    times = {i: 108.0 for i in range(6)}
+    times[5] = 111.6                                    # +3.6 s, within 5%
+
+    kept, excluded = consistency.select_laps(
+        times, max_lap_time_excess=0.05, max_lap_time_excess_s=2.0
+    )
+
+    assert 5 not in kept
+    assert excluded[5].reason is consistency.Exclusion.TOO_SLOW
+    assert excluded[5].excess_s == pytest.approx(3.6)
+
+
+def test_the_relative_ceiling_still_binds_on_a_short_lap():
+    """On a 40 s lap two seconds is 5%, so neither rule is redundant."""
+    times = {i: 40.0 for i in range(6)}
+    times[5] = 41.5                                     # +1.5 s, but +3.75%
+
+    kept, _excluded = consistency.select_laps(
+        times, max_lap_time_excess=0.05, max_lap_time_excess_s=2.0
+    )
+    assert 5 in kept
+
+    kept, _excluded = consistency.select_laps(
+        times, max_lap_time_excess=0.01, max_lap_time_excess_s=2.0
+    )
+    assert 5 not in kept
+
+
+def test_exclusions_carry_a_code_not_a_sentence():
+    """This layer states facts in numbers; the interface is the only place that
+    decides how to word them."""
+    kept, excluded = consistency.select_laps({0: 100.0, 1: 100.5}, min_laps=3)
+
+    assert kept == []
+    assert all(
+        entry.reason is consistency.Exclusion.TOO_FEW_LAPS
+        for entry in excluded.values()
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Drift versus scatter
+# --------------------------------------------------------------------------- #
+
+def test_one_outlier_is_not_a_drift():
+    """Regression: the linear correlation called the Parabolica a drift from
+    5007, 4996, 5005, 5005, 4955 m - four flat laps and one late outlier, where
+    the outlier's magnitude carried the whole statistic."""
+    assert consistency._has_trend((5007.0, 4996.0, 5005.0, 5005.0, 4955.0)) is False
+
+
+def test_a_steady_march_is_a_drift():
+    assert consistency._has_trend((480.0, 486.0, 491.0, 497.0, 503.0)) is True
+    # Noise on top of the march does not hide it: the order still holds.
+    assert consistency._has_trend((480.0, 488.0, 486.0, 497.0, 501.0, 510.0)) is True
+
+
+def test_pure_scatter_is_not_a_drift():
+    assert consistency._has_trend((500.0, 480.0, 510.0, 490.0, 505.0, 485.0)) is False
+
+
+def test_a_missing_lap_keeps_the_others_in_their_own_places():
+    """The correlation is against when each lap happened, not against a lap's
+    position in the surviving list."""
+    assert consistency._has_trend(
+        (480.0, float("nan"), 491.0, 497.0, 503.0, 509.0)
+    ) is True
+
+
+# --------------------------------------------------------------------------- #
+# Per-lap alignment
+# --------------------------------------------------------------------------- #
+
+def test_per_lap_arrays_line_up_with_the_lap_indices():
+    """"Which lap was that" is the question a dispersion chart exists to answer,
+    so a lap with no measurement leaves a gap rather than compacting the array."""
+    reference = [make_corner(0, 400.0)]
+    # Three laps; the middle one has no braking point at this corner.
+    corners_per_lap = {
+        0: [make_corner(0, 400.0, braking=380.0)],
+        1: [make_corner(0, 401.0, braking=None)],
+        2: [make_corner(0, 399.0, braking=390.0)],
+    }
+    lap_times = {0: 100.0, 1: 100.2, 2: 100.1}
+
+    report = consistency.analyse(corners_per_lap, lap_times, reference, min_laps=3)
+
+    corner = report.corners[0]
+    assert len(report.lap_indices) == 3
+    assert len(corner.braking_points_m) == 3
+    assert corner.braking_points_m[0] == pytest.approx(380.0)
+    assert np.isnan(corner.braking_points_m[1])
+    assert corner.braking_points_m[2] == pytest.approx(390.0)
+    # The standard deviation ignores the gap rather than treating it as zero.
+    assert corner.braking_point_std_m == pytest.approx(
+        np.std([380.0, 390.0], ddof=1)
+    )

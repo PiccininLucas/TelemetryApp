@@ -108,10 +108,18 @@ strong_threshold_s_per_km = 2.0
 boundary_position = 0.5
 
 [analysis.consistency]
-# Laps slower than the median by more than this fraction are dropped before
-# measuring dispersion: a lap spoiled by traffic says nothing about the driver's
-# repeatability.
+# Laps slower than the median are dropped before measuring dispersion: a lap
+# spoiled by traffic says nothing about the driver's repeatability.
+#
+# Two ceilings, and the tighter one wins. A purely relative allowance does not
+# survive a change of circuit - 5% of a 108 s Monza lap is 5.4 s, and 5% of a
+# 245 s Le Mans lap is 12 s. Against a real Monza race the relative rule alone
+# admitted a lap that went through the first chicane at 28 km/h, which is an
+# incident and not driving, and that one lap tripled the corner's reported
+# dispersion. Two seconds off your own median is traffic or a mistake at any
+# circuit length.
 max_lap_time_excess = 0.05
+max_lap_time_excess_s = 2.0
 min_laps = 3
 
 [analysis.friction]

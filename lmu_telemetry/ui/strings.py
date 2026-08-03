@@ -302,6 +302,56 @@ ACTION_COMPARE_IDEAL = "Comparar com a volta &ideal"
 CHART_LEGEND_IDEAL = "volta ideal · {time} · {gap} s"
 STATUS_BUILDING_IDEAL = "Analisando todas as voltas da sessão..."
 
+# --- Consistency ------------------------------------------------------------
+CONSISTENCY_TITLE = "Consistência"
+CONSISTENCY_TAB = "Consistência"
+CORNERS_TAB = "Curvas"
+
+CONSISTENCY_UNAVAILABLE = (
+    "A consistência precisa de pelo menos três voltas comparáveis no mesmo "
+    "stint. Dispersão medida em menos que isso não significa nada."
+)
+CONSISTENCY_SUMMARY = (
+    "{n_laps} voltas · mediana {median} · σ dos tempos {std:.3f} s · "
+    "{gain:.2f} s/volta disponíveis"
+)
+CONSISTENCY_STINT = "Stint {number} ({n_laps} voltas)"
+CONSISTENCY_EXCLUDED = "Fora da medição: {laps}"
+CONSISTENCY_EXCLUDED_TOO_SLOW = "volta {number} ({excess:+.3f} s da mediana)"
+CONSISTENCY_EXCLUDED_TOO_FEW = "volta {number} (stint curto demais)"
+
+CONSISTENCY_COLUMN_CORNER = "Curva"
+CONSISTENCY_COLUMN_LAPS = "Voltas"
+CONSISTENCY_COLUMN_BRAKING_STD = "σ frenagem (m)"
+CONSISTENCY_COLUMN_SPEED_STD = "σ V mín (km/h)"
+CONSISTENCY_COLUMN_THROTTLE_STD = "σ acelerador (m)"
+CONSISTENCY_COLUMN_TIME_LOST = "Perda (s/volta)"
+CONSISTENCY_COLUMN_PATTERN = "Padrão"
+
+CONSISTENCY_PATTERN_DRIFT = "deriva"
+CONSISTENCY_PATTERN_SCATTER = "dispersão"
+CONSISTENCY_PATTERN_NONE = "—"
+CONSISTENCY_TOOLTIP_PATTERN = (
+    "Deriva: o ponto de frenagem anda de forma constante ao longo do stint. "
+    "Normalmente é estado de pneu ou de combustível mudando, não pilotagem "
+    "irregular.\n\n"
+    "Dispersão: o ponto varia sem direção definida — aí sim é repetibilidade."
+)
+CONSISTENCY_TOOLTIP_TIME_LOST = (
+    "Média do tempo de passagem menos o melhor tempo do próprio piloto naquele "
+    "trecho. É medido nas curvas de tempo, não estimado a partir da velocidade "
+    "de ápice."
+)
+
+CONSISTENCY_METRIC_BRAKING = "Ponto de frenagem (m)"
+CONSISTENCY_METRIC_SPEED = "Velocidade mínima (km/h)"
+CONSISTENCY_METRIC_THROTTLE = "Retomada do acelerador (m)"
+CONSISTENCY_PLOT_AXIS_LAP = "Volta"
+CONSISTENCY_PLOT_TITLE = "{corner} · média {mean:.1f} · σ {std:.1f}"
+CONSISTENCY_PLOT_EMPTY = "Selecione uma curva para ver volta a volta."
+CONSISTENCY_LEGEND_MEAN = "média"
+CONSISTENCY_LEGEND_BAND = "±1σ"
+
 # --- Panels -----------------------------------------------------------------
 MENU_PANELS = "&Painéis"
 ACTION_PANEL_MAP = "&Traçado"

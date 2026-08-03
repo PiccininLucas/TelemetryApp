@@ -28,7 +28,7 @@ from lmu_telemetry.analysis import (
 )
 from lmu_telemetry.analysis.corners import CornerDetectionSettings
 from lmu_telemetry.core.config import Config, load_config
-from lmu_telemetry.core.models import Corner, Lap
+from lmu_telemetry.core.models import Corner, Lap, LapFlag
 from lmu_telemetry.ingest import time_base
 from lmu_telemetry.ingest.session_loader import Session
 from lmu_telemetry.logging_config import get_logger
@@ -82,6 +82,21 @@ class LapAnalysis:
 
 
 @dataclass(slots=True)
+class StintAnalysis:
+    """One run of consecutive laps between two visits to the pit lane.
+
+    Attributes:
+        index: Position in the session, from zero.
+        lap_indices: The laps in it, in order.
+        report: Consistency across those laps, or None when there are too few.
+    """
+
+    index: int
+    lap_indices: tuple[int, ...]
+    report: consistency.ConsistencyReport | None
+
+
+@dataclass(slots=True)
 class SessionAnalysis:
     """Every analysable lap of a session, plus what needs all of them at once."""
 
@@ -90,12 +105,20 @@ class SessionAnalysis:
     ideal: ideal_lap.IdealLap | None
     consistency: consistency.ConsistencyReport | None
     best_lap_index: int | None
+    stints: list[StintAnalysis] = field(default_factory=list)
 
     @property
     def best(self) -> LapAnalysis | None:
         if self.best_lap_index is None:
             return None
         return self.laps.get(self.best_lap_index)
+
+    def stint_of(self, lap_index: int) -> StintAnalysis | None:
+        """The stint a lap belongs to."""
+        for stint in self.stints:
+            if lap_index in stint.lap_indices:
+                return stint
+        return None
 
 
 def _settings_from(config: Config) -> CornerDetectionSettings:
@@ -235,6 +258,7 @@ def analyse_session(
     track_length_m: float | None = None,
     config: Config | None = None,
     lap_indices: list[int] | None = None,
+    corner_references: Sequence[tuple[float, str]] = (),
 ) -> SessionAnalysis:
     """Analyse every comparable lap of a session.
 
@@ -244,6 +268,10 @@ def analyse_session(
         config: Configuration override.
         lap_indices: Restrict to these laps. Defaults to the comparable ones -
             a partial or pit-limited lap has no meaningful distance axis.
+        corner_references: `(distance_m, name)` pairs from the catalog. Applied
+            before the ideal lap and the consistency report are built, because
+            both snapshot the corner labels and would otherwise report "C4"
+            for a corner the user has already named.
     """
     config = config or load_config()
 
@@ -257,7 +285,7 @@ def analyse_session(
     for lap in candidates:
         result = analyse_lap(session, lap, track_length_m, config)
         if result is not None:
-            analysed[lap.index] = result
+            analysed[lap.index] = name_corners(result, corner_references)
 
     if not analysed:
         return SessionAnalysis({}, [], None, None, None)
@@ -269,9 +297,44 @@ def analyse_session(
         laps=analysed,
         reference_corners=reference_corners,
         ideal=_build_ideal(analysed, reference_corners, config),
-        consistency=_build_consistency(analysed, reference_corners, config),
+        consistency=_build_consistency(
+            analysed, reference_corners, config, list(analysed)
+        ),
         best_lap_index=best_index,
+        stints=_build_stints(session, analysed, reference_corners, config),
     )
+
+
+def _build_stints(
+    session: Session,
+    analysed: dict[int, LapAnalysis],
+    reference_corners: list[Corner],
+    config: Config,
+) -> list[StintAnalysis]:
+    """Split the session at every pit visit and measure each run separately.
+
+    Consistency across a pit stop is not consistency: fuel load and tyre age
+    both step at the stop, so the dispersion would be measuring the car's state
+    rather than the driver's repeatability. A session driven without stopping
+    is one stint containing everything, which is the common case.
+    """
+    in_pits = {
+        lap.index: LapFlag.IN_PITS in lap.flags or LapFlag.IN_LAP in lap.flags
+        for lap in session.laps
+    }
+    ordered = sorted(analysed)
+    runs = consistency.detect_stints(ordered, in_pits)
+
+    return [
+        StintAnalysis(
+            index=position,
+            lap_indices=lap_indices,
+            report=_build_consistency(
+                analysed, reference_corners, config, list(lap_indices)
+            ),
+        )
+        for position, lap_indices in enumerate(runs)
+    ]
 
 
 def _build_ideal(
@@ -333,17 +396,25 @@ def _build_consistency(
     analysed: dict[int, LapAnalysis],
     reference_corners: list[Corner],
     config: Config,
+    lap_indices: list[int],
 ) -> consistency.ConsistencyReport | None:
     if not reference_corners:
         return None
 
+    subset = {index: analysed[index] for index in lap_indices if index in analysed}
+    if not subset:
+        return None
+
     return consistency.analyse(
-        {index: a.corners for index, a in analysed.items()},
-        {index: a.time_s for index, a in analysed.items()},
+        {index: a.corners for index, a in subset.items()},
+        {index: a.time_s for index, a in subset.items()},
         reference_corners,
-        segment_times_s=_corner_segment_times(analysed, reference_corners),
+        segment_times_s=_corner_segment_times(subset, reference_corners),
         max_lap_time_excess=float(
             config.get("analysis.consistency.max_lap_time_excess")
+        ),
+        max_lap_time_excess_s=float(
+            config.get("analysis.consistency.max_lap_time_excess_s")
         ),
         min_laps=int(config.get("analysis.consistency.min_laps")),
     )

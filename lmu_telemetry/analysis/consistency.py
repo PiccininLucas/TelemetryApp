@@ -27,10 +27,41 @@ rest of the application beyond the value objects.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 import numpy as np
+from scipy.stats import spearmanr
 
 from lmu_telemetry.core.models import Corner
+
+
+class Exclusion(str, Enum):
+    """Why a lap was left out of the measurement.
+
+    A code rather than a sentence: this layer states facts in numbers, and the
+    interface is the only place that decides how to word them.
+    """
+
+    #: Slower than the median by more than the allowed excess - traffic, or a
+    #: mistake. Says nothing about repeatability.
+    TOO_SLOW = "too_slow"
+    #: The stint has too few usable laps for dispersion to mean anything.
+    TOO_FEW_LAPS = "too_few_laps"
+
+
+@dataclass(frozen=True, slots=True)
+class ExcludedLap:
+    """One lap that was not measured, and by how much it missed.
+
+    Attributes:
+        lap_index: Which lap.
+        reason: Why it was dropped.
+        excess_s: Seconds above the median, when that is the reason.
+    """
+
+    lap_index: int
+    reason: Exclusion
+    excess_s: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,9 +76,12 @@ class CornerConsistency:
         braking_point_std_m: Spread of the braking point.
         minimum_speed_std_ms: Spread of the apex speed.
         throttle_point_std_m: Spread of the throttle resumption point.
-        braking_points_m: The individual values, so a chart can show the points
-            and not only the box - a drift across the stint and random scatter
-            have the same standard deviation and very different causes.
+        braking_points_m: One value per lap of `lap_indices`, NaN where the lap
+            has none - so a chart can show the points and not only the spread.
+            A drift across the stint and random scatter have the same standard
+            deviation and very different causes, and only the points say which.
+            Aligned with the report's `lap_indices` by position, which is what
+            makes "which lap was that" answerable.
         minimum_speeds_ms: Likewise.
         throttle_points_m: Likewise.
         estimated_time_lost_s: Time attributable to this dispersion.
@@ -86,17 +120,22 @@ class ConsistencyReport:
 
     Attributes:
         corners: Per-corner results, ordered by estimated time lost.
-        lap_indices: Which laps were measured.
-        excluded_lap_indices: Which were dropped, and why, by lap index.
+        lap_indices: Which laps were measured, in order. Every corner's
+            per-lap arrays are aligned with this.
+        excluded_laps: Which were dropped, and why, by lap index.
         lap_time_std_s: Spread of the lap times themselves.
         median_lap_time_s: Median lap time of the measured laps.
     """
 
     corners: list[CornerConsistency]
     lap_indices: tuple[int, ...]
-    excluded_lap_indices: dict[int, str]
+    excluded_laps: dict[int, ExcludedLap]
     lap_time_std_s: float
     median_lap_time_s: float
+
+    @property
+    def is_measurable(self) -> bool:
+        return bool(self.corners) and len(self.lap_indices) >= 2
 
     @property
     def total_estimated_gain_s(self) -> float:
@@ -112,7 +151,8 @@ def select_laps(
     lap_times_s: dict[int, float],
     max_lap_time_excess: float = 0.05,
     min_laps: int = 3,
-) -> tuple[list[int], dict[int, str]]:
+    max_lap_time_excess_s: float = 2.0,
+) -> tuple[list[int], dict[int, ExcludedLap]]:
     """Choose which laps of a stint to measure.
 
     A lap spoiled by traffic or a mistake says nothing about repeatability, and
@@ -123,13 +163,22 @@ def select_laps(
     The median, not the mean: one very slow lap drags a mean upward and would
     then justify keeping itself.
 
+    **Two ceilings, and the tighter one wins.** A purely relative allowance does
+    not survive a change of circuit: 5% of a 108 s Monza lap is 5.4 s, and 5% of
+    a 245 s Le Mans lap is 12 s. Measured against a real Monza race, the
+    relative rule alone admitted a lap that went through the first chicane at
+    28 km/h - an incident, not driving - and that one lap tripled the reported
+    dispersion of the corner. The absolute allowance is what makes the rule mean
+    the same thing at every circuit.
+
     Args:
         lap_times_s: Lap index -> lap time. Callers pass only comparable laps.
         max_lap_time_excess: Allowed fraction above the median.
         min_laps: Below this many laps, dispersion is not meaningful.
+        max_lap_time_excess_s: Allowed seconds above the median.
 
     Returns:
-        `(kept_lap_indices, excluded_with_reason)`.
+        `(kept_lap_indices, excluded_by_lap_index)`.
     """
     if not lap_times_s:
         return [], {}
@@ -137,27 +186,34 @@ def select_laps(
     times = np.array(list(lap_times_s.values()), dtype=np.float64)
     indices = list(lap_times_s.keys())
     median = float(np.median(times))
-    ceiling = median * (1.0 + max_lap_time_excess)
+    ceiling = min(
+        median * (1.0 + max_lap_time_excess),
+        median + max_lap_time_excess_s,
+    )
 
-    kept, excluded = [], {}
+    kept: list[int] = []
+    excluded: dict[int, ExcludedLap] = {}
     for lap_index, time_s in zip(indices, times, strict=True):
         if time_s <= ceiling:
             kept.append(lap_index)
         else:
-            excluded[lap_index] = (
-                f"{time_s - median:+.3f} s acima da mediana"
+            excluded[lap_index] = ExcludedLap(
+                lap_index, Exclusion.TOO_SLOW, float(time_s - median)
             )
 
     if len(kept) < min_laps:
         return [], {
             **excluded,
-            **{i: "poucas voltas no stint" for i in kept},
+            **{
+                i: ExcludedLap(i, Exclusion.TOO_FEW_LAPS)
+                for i in kept
+            },
         }
 
     return kept, excluded
 
 
-def _std(values: list[float]) -> float:
+def _std(values) -> float:
     """Sample standard deviation, or 0 when there is not enough to measure."""
     finite = [v for v in values if v is not None and np.isfinite(v)]
     if len(finite) < 2:
@@ -168,17 +224,34 @@ def _std(values: list[float]) -> float:
 def _has_trend(values: tuple[float, ...], threshold: float = 0.7) -> bool:
     """Whether a series drifts monotonically rather than scattering.
 
-    Correlation of the values against lap order. A strong correlation means the
-    braking point is moving steadily through the stint - tyre or fuel state -
-    rather than the driver being erratic.
+    A drift is a different problem from scatter and usually not a driving
+    problem at all: a braking point creeping later through a stint is tyre or
+    fuel state changing, while the same spread jumping about is the driver.
+
+    **Rank correlation, not linear.** The question is whether the value moves
+    *steadily*, which is a statement about order, not about linearity. On a real
+    Monza stint the linear correlation called the Parabolica a drift from the
+    braking points 5007, 4996, 5005, 5005, 4955 m - four flat laps and one late
+    outlier, where the single outlier's magnitude carried the whole statistic.
+    Ranking first makes the test ask what it means to ask, and one stray lap can
+    then move the answer by one rank rather than by fifty metres.
+
+    Laps with no value are skipped, but the lap *order* of the remaining ones is
+    preserved: the correlation is against when each lap happened, not against
+    its position in the surviving list.
     """
-    if len(values) < 4:
-        return False
-    order = np.arange(len(values), dtype=np.float64)
     series = np.asarray(values, dtype=np.float64)
+    order = np.arange(series.size, dtype=np.float64)
+    finite = np.isfinite(series)
+    if int(finite.sum()) < 4:
+        return False
+
+    series, order = series[finite], order[finite]
     if np.std(series) == 0.0:
         return False
-    return bool(abs(np.corrcoef(order, series)[0, 1]) >= threshold)
+
+    correlation = spearmanr(order, series).statistic
+    return bool(np.isfinite(correlation) and abs(correlation) >= threshold)
 
 
 def time_lost_from_segment_times(segment_times_s: list[float]) -> float:
@@ -251,6 +324,7 @@ def analyse(
     *,
     segment_times_s: dict[int, dict[int, float]] | None = None,
     max_lap_time_excess: float = 0.05,
+    max_lap_time_excess_s: float = 2.0,
     min_laps: int = 3,
     match_tolerance_m: float = 50.0,
 ) -> ConsistencyReport:
@@ -267,6 +341,8 @@ def analyse(
             rather than estimated from apex speed, which is both exact and free
             of the model's failure modes.
         max_lap_time_excess: Allowed fraction above the median lap time.
+        max_lap_time_excess_s: Allowed seconds above it. The tighter of the two
+            ceilings wins; see `select_laps`.
         min_laps: Minimum laps for the result to mean anything.
         match_tolerance_m: How far an apex may move between laps.
 
@@ -275,31 +351,40 @@ def analyse(
     """
     from lmu_telemetry.analysis.corners import match_corners
 
-    kept, excluded = select_laps(lap_times_s, max_lap_time_excess, min_laps)
+    kept, excluded = select_laps(
+        lap_times_s, max_lap_time_excess, min_laps, max_lap_time_excess_s
+    )
     kept = [i for i in kept if i in corners_per_lap]
 
     if not kept or not reference_corners:
         return ConsistencyReport(
-            corners=[], lap_indices=tuple(kept), excluded_lap_indices=excluded,
+            corners=[], lap_indices=tuple(kept), excluded_laps=excluded,
             lap_time_std_s=0.0, median_lap_time_s=0.0,
         )
 
-    # Gather each reference corner's measurements across the kept laps.
-    braking: dict[int, list[float]] = {c.index: [] for c in reference_corners}
-    speeds: dict[int, list[float]] = {c.index: [] for c in reference_corners}
-    throttle: dict[int, list[float]] = {c.index: [] for c in reference_corners}
+    # One slot per kept lap, per corner, filled with NaN and written where the
+    # lap actually has a measurement. Appending only what exists would compact
+    # the arrays and lose which lap each value came from - and "which lap was
+    # that" is the question a dispersion chart exists to answer.
+    def empty() -> dict[int, np.ndarray]:
+        return {
+            corner.index: np.full(len(kept), np.nan, dtype=np.float64)
+            for corner in reference_corners
+        }
 
-    for lap_index in kept:
+    braking, speeds, throttle = empty(), empty(), empty()
+
+    for position, lap_index in enumerate(kept):
         lap_corners = corners_per_lap[lap_index]
         matches = match_corners(lap_corners, reference_corners, match_tolerance_m)
         for local_index, reference_index in matches.items():
             corner = lap_corners[local_index]
             key = reference_corners[reference_index].index
             if corner.braking_distance_m is not None:
-                braking[key].append(corner.braking_distance_m)
+                braking[key][position] = corner.braking_distance_m
             if corner.throttle_distance_m is not None:
-                throttle[key].append(corner.throttle_distance_m)
-            speeds[key].append(corner.minimum_speed_ms)
+                throttle[key][position] = corner.throttle_distance_m
+            speeds[key][position] = corner.minimum_speed_ms
 
     results = []
     for corner in reference_corners:
@@ -316,7 +401,7 @@ def analyse(
             # No measured times available: fall back to the speed model, over
             # the corner itself rather than the whole window between corners.
             time_lost = estimate_time_lost_from_speed(
-                speeds[key],
+                list(speeds[key]),
                 corner_length_m=min(
                     max(corner.end_distance_m - corner.start_distance_m, 1.0),
                     200.0,
@@ -327,7 +412,7 @@ def analyse(
             corner_index=key,
             corner_label=corner.label,
             apex_distance_m=corner.apex_distance_m,
-            n_laps=len(speeds[key]),
+            n_laps=int(np.count_nonzero(np.isfinite(speeds[key]))),
             braking_point_std_m=_std(braking[key]),
             minimum_speed_std_ms=_std(speeds[key]),
             throttle_point_std_m=_std(throttle[key]),
@@ -343,7 +428,7 @@ def analyse(
     return ConsistencyReport(
         corners=results,
         lap_indices=tuple(kept),
-        excluded_lap_indices=excluded,
+        excluded_laps=excluded,
         lap_time_std_s=_std(kept_times),
         median_lap_time_s=float(np.median(kept_times)) if kept_times else 0.0,
     )

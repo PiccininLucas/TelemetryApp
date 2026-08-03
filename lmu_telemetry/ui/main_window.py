@@ -34,6 +34,7 @@ from lmu_telemetry.ui import strings
 from lmu_telemetry.ui.chart_panel import (
     ROW_SPECS, AxisMode, ChartStack, LapTrace,
 )
+from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
 from lmu_telemetry.ui.corner_table import CornerTable
 from lmu_telemetry.ui.formatting import format_gap, format_lap_time
 from lmu_telemetry.ui.gg_panel import FrictionPanel
@@ -99,6 +100,9 @@ class OpenSession:
         for analysis in self._laps.values():
             if analysis is not None:
                 pipeline.name_corners(analysis, self.corner_references)
+        # The ideal lap and the consistency report snapshot the labels, so they
+        # have to be rebuilt rather than patched.
+        self._session_analysis = None
 
     def _lap(self, lap_index: int) -> Lap | None:
         return next((lap for lap in self.session.laps if lap.index == lap_index), None)
@@ -112,7 +116,8 @@ class OpenSession:
         """
         if self._session_analysis is None:
             self._session_analysis = pipeline.analyse_session(
-                self.session, self.track_length_m
+                self.session, self.track_length_m,
+                corner_references=self.corner_references,
             )
         return self._session_analysis
 
@@ -238,16 +243,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.centre = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         self.chart = ChartStack()
         self.corner_table = CornerTable()
+        self.consistency = ConsistencyPanel()
+
+        # Tabs rather than another split: both are per-corner tables of the
+        # same lap, and stacking a third pane would leave every one of them too
+        # short to read.
+        self.tabs = QtWidgets.QTabWidget()
+        self.tabs.addTab(self.corner_table, strings.CORNERS_TAB)
+        self.tabs.addTab(self.consistency, strings.CONSISTENCY_TAB)
+
         self.centre.addWidget(self.chart)
-        self.centre.addWidget(self.corner_table)
+        self.centre.addWidget(self.tabs)
         self.centre.setStretchFactor(0, 3)
         self.centre.setStretchFactor(1, 1)
-        self.centre.setSizes([620, 260])
+        self.centre.setSizes([600, 300])
         self.splitter.addWidget(self.centre)
 
         self.corner_table.corner_selected.connect(self._on_cursor_moved)
         self.corner_table.corner_zoomed.connect(self.chart.zoom_to)
         self.corner_table.corner_renamed.connect(self.rename_corner)
+        self.consistency.corner_selected.connect(self._on_cursor_moved)
+        self.consistency.stint_changed.connect(self._on_stint_changed)
 
         # The right column: where the lap happened, and how hard the tyres were
         # worked doing it. Both follow the traces' cursor, and the map drives it
@@ -594,6 +610,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._show_markers(primary, ideal)
         self._show_corner_table(primary, benchmark, ideal)
+        self._show_consistency(opened, selection.lap_index)
         self._show_side_panels(primary, delta)
         self._sync_actions(comparing=benchmark_trace is not None)
         self._set_warnings(notes)
@@ -630,6 +647,36 @@ class MainWindow(QtWidgets.QMainWindow):
             show_comparison=benchmark is not None,
             show_ideal=ideal is not None,
         )
+
+    def _show_consistency(self, opened: OpenSession, lap_index: int) -> None:
+        """Show the stint the lap on screen belongs to.
+
+        Following the selected lap rather than always opening on the first
+        stint: the driver is asking about the run they just did.
+        """
+        analysis = opened.session_analysis()
+        stints = analysis.stints
+        if not stints:
+            self.consistency.clear()
+            return
+
+        stint = analysis.stint_of(lap_index)
+        self.consistency.show_stints(
+            stints, current_index=0 if stint is None else stint.index
+        )
+
+    def _on_stint_changed(self, index: int) -> None:
+        """The user picked a different stint from the selector."""
+        if self._selection is None:
+            return
+        try:
+            opened = self._sessions.get(self._selection)
+        except TelemetryError:
+            return
+        stints = opened.session_analysis().stints
+        if 0 <= index < len(stints):
+            stint = stints[index]
+            self.consistency.show_report(stint.report, list(stint.lap_indices))
 
     def rename_corner(
         self, corner_index: int, distance_m: float, name: str
@@ -810,6 +857,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _clear_panels(self) -> None:
         self.chart.clear()
         self.corner_table.clear()
+        self.consistency.clear()
         self.track_map.clear()
         self.friction.clear()
 
