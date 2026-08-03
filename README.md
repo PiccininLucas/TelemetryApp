@@ -37,10 +37,13 @@ how optimistic the target is.*
 
 ![Consistency](docs/screenshots/consistency.png)
 
-*Repeatability across the stint, ranked worst first. The Rettifilo costs
-0.747 s a lap — and the plot says why: the braking point marches from 747 m
-down to 724 m over five laps, which is a drift, not scatter, and is far more
-likely to be tyre state than the driver.*
+*The shipped demo dataset, so this one is reproducible: `python
+scripts/import_session.py data/demo/` and it is what opens. Repeatability across
+the stint, ranked worst first — and the plot says why C4 costs 0.564 s a lap.
+The braking point marches 2668 → 2710 m over four laps, which is a drift, not
+scatter, and far more likely to be tyre state than the driver. The banner at the
+top is the time base being corrected: this session drifted 0.400 s against the
+GPS clock.*
 
 ---
 
@@ -689,13 +692,15 @@ metadata key nobody has reviewed.
 ### Trying it without the game
 
 ```bash
-python scripts/list_laps.py "data/demo/Autodromo Nazionale Monza_Q_2026-07-30T17_03_52Z.duckdb"
+python scripts/list_laps.py "data/demo/Fuji Speedway_R_2026-07-15T18_42_49Z.duckdb"
 python scripts/import_session.py "data/demo/"
 .venv\Scripts\python.exe main.py
 ```
 
-Monza qualifying, three comparable laps — enough for the comparison, the ideal
-lap and the consistency panel.
+A Fuji race: seven corners, five comparable laps, and every panel populated. It
+was chosen because it exercises the awkward paths as well as the happy one — the
+time base drifted 0.400 s and was corrected, and one lap is 2.2 s off the median
+and is excluded from the consistency measurement with the reason stated.
 
 ---
 
