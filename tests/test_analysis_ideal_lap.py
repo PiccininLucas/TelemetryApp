@@ -266,3 +266,53 @@ def test_ideal_lap_of_identical_laps_equals_the_lap(synthetic_lap):
 
     assert result.total_time_s == pytest.approx(synthetic_lap.lap_time_s, rel=1e-3)
     assert ideal_lap.significant_discontinuities(result) == []
+
+
+def test_time_inside_a_segment_follows_the_winning_lap_not_a_ramp():
+    """Regression: elapsed time was spread linearly across each segment, which
+    assumes constant speed through it.
+
+    A real segment runs from a straight into an apex and out again. Spreading
+    its total linearly across distance puts the ideal lap's clock a second
+    wrong in the middle - invisible in the lap total, which is the sum of the
+    segment times either way, and the dominant term in any delta drawn against
+    the ideal lap.
+    """
+    grid = np.arange(0.0, 1001.0)
+    # One lap, so the ideal lap is that lap and their elapsed curves must agree
+    # everywhere, not just at the ends.
+    speed = np.where(grid < 500, 80.0, 20.0)
+    elapsed = np.concatenate(([0.0], np.cumsum(1.0 / speed[:-1])))
+
+    result = ideal_lap.build_ideal_lap(
+        {0: elapsed}, {0: speed}, grid,
+        [make_corner(0, 250.0), make_corner(1, 750.0)],
+    )
+
+    assert result is not None
+    assert result.n_contributing_laps == 1
+    # Midway through the slow half the ramp was wrong by seconds; the real
+    # profile is exact.
+    assert np.max(np.abs(result.elapsed_s[:-1] - elapsed[:-1])) < 1e-6
+
+
+def test_segment_times_are_unchanged_by_the_profile_used():
+    """The lap total is the sum of the segment times whichever way time is
+    distributed inside them, so the fix must not move it."""
+    grid = np.arange(0.0, 601.0)
+    fast = np.full_like(grid, 60.0)
+    slow = np.where(grid < 300, 60.0, 30.0)
+    fast_elapsed = np.concatenate(([0.0], np.cumsum(1.0 / fast[:-1])))
+    slow_elapsed = np.concatenate(([0.0], np.cumsum(1.0 / slow[:-1])))
+
+    result = ideal_lap.build_ideal_lap(
+        {0: fast_elapsed, 1: slow_elapsed}, {0: fast, 1: slow}, grid,
+        [make_corner(0, 150.0), make_corner(1, 450.0)],
+    )
+
+    assert result is not None
+    assert result.total_time_s == pytest.approx(
+        sum(segment.best_time_s for segment in result.segments)
+    )
+    # Elapsed time never goes backwards: the clock of a lap cannot.
+    assert np.all(np.diff(result.elapsed_s) >= -1e-9)

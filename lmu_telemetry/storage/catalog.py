@@ -483,6 +483,36 @@ def corner_names(
     return {row[0]: row[1] for row in rows}
 
 
+@dataclass(frozen=True, slots=True)
+class CornerReference:
+    """A corner the user has named, and where it is.
+
+    The distance is what makes the name durable. Corner *indices* shift the
+    moment the detector finds one more or one fewer corner on a lap - a wet lap,
+    a lap with a spin - and a name pinned to an index would then move to the
+    wrong corner. Pinned to a distance from the line, it stays put.
+    """
+
+    corner_index: int
+    name: str | None
+    reference_distance_m: float | None
+
+
+def corner_references(
+    con: duckdb.DuckDBPyConnection, track_name: str
+) -> list[CornerReference]:
+    """Every named corner of a track, with the distance that anchors it."""
+    rows = con.execute(
+        """
+        SELECT corner_index, name, reference_distance_m
+        FROM corners WHERE track_id = ? AND name IS NOT NULL
+        ORDER BY reference_distance_m NULLS LAST, corner_index
+        """,
+        [track_id_for(track_name)],
+    ).fetchall()
+    return [CornerReference(row[0], row[1], row[2]) for row in rows]
+
+
 def statistics(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
     """Row counts, for the CLI summary."""
     def count(table: str) -> int:

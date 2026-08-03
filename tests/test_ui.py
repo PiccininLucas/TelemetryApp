@@ -783,3 +783,142 @@ def test_setting_the_cursor_does_not_re_emit(qt_app):
     chart.set_cursor_distance(50.0)
 
     assert emitted == []
+
+
+# --------------------------------------------------------------------------- #
+# Corner table
+# --------------------------------------------------------------------------- #
+
+def make_corner_rows(n: int = 3, *, compared: bool = False, ideal: bool = False):
+    from lmu_telemetry.core.models import Corner
+    from lmu_telemetry.pipeline import CornerRow
+
+    rows = []
+    for index in range(n):
+        corner = Corner(
+            index=index,
+            apex_distance_m=1000.0 * (index + 1),
+            minimum_speed_ms=20.0 + index,
+            entry_speed_ms=70.0,
+            braking_distance_m=1000.0 * (index + 1) - 150.0,
+            throttle_distance_m=1000.0 * (index + 1) + 40.0,
+            coasting_time_s=0.1 + 0.2 * index,
+            trail_braking_m=60.0,
+            start_distance_m=1000.0 * (index + 1) - 200.0,
+            end_distance_m=1000.0 * (index + 1) + 200.0,
+        )
+        rows.append(CornerRow(
+            corner=corner,
+            delta_s=(-0.1 * index if compared else None),
+            speed_delta_ms=(0.5 * index if compared else None),
+            best_lap_index=(index if ideal else None),
+            gain_s=(0.05 * index if ideal else None),
+        ))
+    return rows
+
+
+def test_corner_table_hides_columns_that_have_nothing_to_say(qt_app):
+    from lmu_telemetry.ui.corner_table import (
+        COLUMN_DELTA, COLUMN_GAIN, _INDEX_OF, CornerTable,
+    )
+
+    table = CornerTable()
+    table.show_corners(make_corner_rows())
+    assert table.table.isColumnHidden(_INDEX_OF[COLUMN_DELTA])
+    assert table.table.isColumnHidden(_INDEX_OF[COLUMN_GAIN])
+
+    table.show_corners(make_corner_rows(compared=True, ideal=True),
+                       show_comparison=True, show_ideal=True)
+    assert not table.table.isColumnHidden(_INDEX_OF[COLUMN_DELTA])
+    assert not table.table.isColumnHidden(_INDEX_OF[COLUMN_GAIN])
+
+
+def test_corner_table_converts_speeds_for_display(qt_app):
+    from lmu_telemetry.ui.corner_table import COLUMN_MIN_SPEED, _INDEX_OF, CornerTable
+
+    table = CornerTable()
+    table.show_corners(make_corner_rows(1))
+
+    assert table.table.item(0, _INDEX_OF[COLUMN_MIN_SPEED]).text() == "72.0"
+
+
+def test_filling_the_table_does_not_look_like_a_rename(qt_app):
+    """Every cell written counts as an edit unless signals are suppressed, and
+    a spurious rename would write a name the user never typed to the catalog."""
+    from lmu_telemetry.ui.corner_table import CornerTable
+
+    table = CornerTable()
+    renames = []
+    table.corner_renamed.connect(lambda *args: renames.append(args))
+    table.show_corners(make_corner_rows())
+
+    assert renames == []
+
+
+def test_renaming_a_corner_reports_its_distance(qt_app):
+    """The catalog anchors names to a distance, not a corner number."""
+    from lmu_telemetry.ui.corner_table import COLUMN_NAME, _INDEX_OF, CornerTable
+
+    table = CornerTable()
+    renames = []
+    table.corner_renamed.connect(lambda *args: renames.append(args))
+    table.show_corners(make_corner_rows(2))
+
+    table.table.item(1, _INDEX_OF[COLUMN_NAME]).setText("Lesmo 1")
+
+    assert renames == [(1, 2000.0, "Lesmo 1")]
+
+
+def test_corner_table_marks_the_corner_worth_the_most(qt_app):
+    """With the ideal lap on, that single cell is the answer to "what do I
+    practise next"."""
+    from lmu_telemetry.ui.corner_table import COLUMN_GAIN, _INDEX_OF, CornerTable
+
+    table = CornerTable()
+    table.show_corners(make_corner_rows(3, ideal=True), show_ideal=True)
+
+    colours = [
+        table.table.item(row, _INDEX_OF[COLUMN_GAIN]).foreground().color().name()
+        for row in range(3)
+    ]
+    assert colours[2] == theme.WARNING          # gain 0.10, the largest
+    assert colours[0] != theme.WARNING
+
+
+def test_following_the_cursor_does_not_move_it_back(qt_app):
+    """The table drives the cursor and the cursor drives the table."""
+    from lmu_telemetry.ui.corner_table import CornerTable
+
+    table = CornerTable()
+    table.show_corners(make_corner_rows(3))
+    selected = []
+    table.corner_selected.connect(selected.append)
+
+    table.select_corner_at(2010.0)
+
+    assert table.table.currentRow() == 1
+    assert selected == []
+
+
+def test_chart_markers_only_exist_on_the_distance_axis(qt_app):
+    """A corner is at a distance. On the time axis the same marker would be at
+    a different place for every lap."""
+    chart = ChartStack()
+    chart.show_laps(make_trace())
+    chart.set_corner_markers([50.0, 120.0], ["C1", "C2"])
+    assert len(chart._rows[ROW_SPEED].markers) == 2
+
+    chart.set_axis_mode(AxisMode.TIME)
+    assert chart._rows[ROW_SPEED].markers == []
+
+
+def test_zoom_to_a_corner_leaves_room_either_side(qt_app):
+    """A corner shown edge to edge hides the braking that set it up and the
+    exit that pays for it."""
+    chart = ChartStack()
+    chart.show_laps(make_trace(n=1000))
+    chart.zoom_to(400.0, 500.0, margin_fraction=0.3)
+
+    low, high = chart._rows[ROW_SPEED].plot.getViewBox().viewRange()[0]
+    assert low == pytest.approx(370.0)
+    assert high == pytest.approx(530.0)

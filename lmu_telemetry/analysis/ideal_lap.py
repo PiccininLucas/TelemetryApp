@@ -228,7 +228,7 @@ def build_ideal_lap(
         return None
 
     speed, elapsed, discontinuities = _stitch(
-        segments, lap_speed_ms, grid_m, edges
+        segments, lap_speed_ms, lap_elapsed_s, grid_m, edges
     )
 
     real_times = {
@@ -253,10 +253,20 @@ def build_ideal_lap(
 def _stitch(
     segments: list[Segment],
     lap_speed_ms: dict[int, np.ndarray],
+    lap_elapsed_s: dict[int, np.ndarray],
     grid_m: np.ndarray,
     edges: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, list[Discontinuity]]:
-    """Splice the winning laps' speed traces and accumulate the ideal time."""
+    """Splice the winning laps' speed traces and accumulate the ideal time.
+
+    Time inside a segment is the winning lap's *own* elapsed profile, shifted so
+    the ideal lap's clock runs continuously across the seam. Spreading the
+    segment's total linearly across its distance instead would assume constant
+    speed through it, and a Monza segment runs from 275 km/h on the straight to
+    58 km/h at the apex - an assumption wrong by about a second in the middle.
+    That error is invisible in the lap total, which is the sum of the segment
+    times either way, and dominates any delta drawn against the ideal lap.
+    """
     speed = np.full(len(grid_m), np.nan, dtype=np.float64)
     elapsed = np.zeros(len(grid_m), dtype=np.float64)
     discontinuities: list[Discontinuity] = []
@@ -273,12 +283,12 @@ def _stitch(
 
         speed[start:end] = source[start:end]
 
-        # Time accumulates piecewise: within a segment the winning lap's own
-        # profile is used, offset so the lap's clock runs continuously.
         span = end - start
-        if span > 0:
-            fraction = np.linspace(0.0, 1.0, span, endpoint=False)
-            elapsed[start:end] = running_time + fraction * segment.best_time_s
+        source_elapsed = lap_elapsed_s.get(segment.best_lap_index)
+        if span > 0 and source_elapsed is not None:
+            elapsed[start:end] = (
+                running_time + source_elapsed[start:end] - source_elapsed[start]
+            )
             running_time += segment.best_time_s
 
         if previous_end_speed is not None and previous_lap is not None:

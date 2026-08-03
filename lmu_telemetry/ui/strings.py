@@ -156,9 +156,11 @@ STATUS_LAP_LOADED = (
     "carregada em {elapsed:.0f} ms"
 )
 STATUS_LAP_COMPARED = (
-    "Volta {number} · {time} · {gap} s vs volta {reference} · "
+    "Volta {number} · {time} · {gap} s vs {reference} · "
     "pior perda {loss} s em {loss_at:.0f} m · carregada em {elapsed:.0f} ms"
 )
+STATUS_REFERENCE_LAP = "volta {number}"
+STATUS_REFERENCE_IDEAL = "volta ideal"
 STATUS_NO_SELECTION = "Selecione uma volta na árvore à esquerda."
 STATUS_REFERENCE_PINNED = "Volta {number} fixada como referência."
 STATUS_NO_REFERENCE_PINNED = "Nenhuma volta fixada. Use Exibir ▸ Comparação ▸ Fixar."
@@ -251,6 +253,54 @@ GG_FILL_TOOLTIP = (
     "mesmo tempo, ou seja, o quanto a frenagem é misturada com a curva."
 )
 GG_CURSOR = "{lateral:+.2f} g lat · {longitudinal:+.2f} g long · {total:.2f} g total"
+
+# --- Corner table -----------------------------------------------------------
+CORNERS_TITLE = "Curvas"
+CORNERS_EMPTY = "Nenhuma curva detectada nesta volta."
+
+CORNERS_COLUMN_NAME = "Curva"
+CORNERS_COLUMN_APEX = "Ápice (m)"
+CORNERS_COLUMN_MIN_SPEED = "V mín (km/h)"
+CORNERS_COLUMN_ENTRY_SPEED = "V entrada (km/h)"
+CORNERS_COLUMN_BRAKING = "Frenagem (m)"
+CORNERS_COLUMN_TRAIL = "Trail (m)"
+CORNERS_COLUMN_COASTING = "Inércia (s)"
+CORNERS_COLUMN_SPEED_DELTA = "ΔV mín (km/h)"
+CORNERS_COLUMN_DELTA = "Δt (s)"
+CORNERS_COLUMN_BEST_LAP = "Melhor volta"
+CORNERS_COLUMN_GAIN = "A ganhar (s)"
+
+CORNERS_TOOLTIP_NAME = (
+    "Clique duas vezes para nomear a curva. O nome fica gravado por pista e "
+    "sobrevive a reimportar qualquer sessão — ele é ancorado na distância da "
+    "linha de chegada, não no número da curva."
+)
+CORNERS_TOOLTIP_GAIN = (
+    "Quanto esta volta perde neste trecho para a melhor passagem da sessão. "
+    "Somado, é o ganho da volta ideal."
+)
+CORNERS_TOOLTIP_ROW = "Clique para levar o cursor ao ápice; duas vezes para ampliar."
+
+# --- Ideal lap --------------------------------------------------------------
+IDEAL_SUMMARY = (
+    "Volta ideal {time} · {gain} s abaixo da melhor real ({best}) · "
+    "{n_laps} voltas contribuem"
+)
+IDEAL_UNAVAILABLE = (
+    "A volta ideal precisa de pelo menos duas voltas comparáveis na sessão."
+)
+#: Stated wherever the ideal lap appears, per the analysis module's own caveat.
+IDEAL_CAVEAT = (
+    "A volta ideal é costurada com o melhor trecho de cada volta. A velocidade "
+    "de saída de um trecho condiciona a entrada no seguinte, então este alvo "
+    "não é garantidamente possível — é um alvo, não um recorde.\n\n"
+    "As emendas onde a velocidade salta estão marcadas no gráfico: elas são a "
+    "evidência de que a volta é sintética."
+)
+IDEAL_SEAMS = "{n} emendas com salto de velocidade (máx {jump:.0f} km/h)"
+ACTION_COMPARE_IDEAL = "Comparar com a volta &ideal"
+CHART_LEGEND_IDEAL = "volta ideal · {time} · {gap} s"
+STATUS_BUILDING_IDEAL = "Analisando todas as voltas da sessão..."
 
 # --- Panels -----------------------------------------------------------------
 MENU_PANELS = "&Painéis"

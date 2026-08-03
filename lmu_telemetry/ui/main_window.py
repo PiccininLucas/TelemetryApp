@@ -24,6 +24,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from lmu_telemetry import pipeline
+from lmu_telemetry.analysis import ideal_lap
 from lmu_telemetry.core.errors import TelemetryError
 from lmu_telemetry.core.models import Lap
 from lmu_telemetry.ingest.session_loader import Session, load_session
@@ -33,6 +34,7 @@ from lmu_telemetry.ui import strings
 from lmu_telemetry.ui.chart_panel import (
     ROW_SPECS, AxisMode, ChartStack, LapTrace,
 )
+from lmu_telemetry.ui.corner_table import CornerTable
 from lmu_telemetry.ui.formatting import format_gap, format_lap_time
 from lmu_telemetry.ui.gg_panel import FrictionPanel
 from lmu_telemetry.ui.session_browser import LapSelection, SessionBrowser
@@ -52,6 +54,9 @@ class ComparisonMode(str, Enum):
     #: A lap the user pinned, possibly from another session, so a whole
     #: afternoon can be measured against one benchmark.
     PINNED = "pinned"
+    #: The theoretical ideal lap, stitched from the best segment of every lap
+    #: of the session. A target, not a record - see `IdealLap.CAVEAT`.
+    IDEAL = "ideal"
 
 
 class OpenSession:
@@ -69,6 +74,10 @@ class OpenSession:
         self.session = session
         self.track_length_m = track_length_m
         self._laps: dict[int, pipeline.LapAnalysis | None] = {}
+        self._session_analysis: pipeline.SessionAnalysis | None = None
+        #: `(distance_m, name)` for every corner the user has named at this
+        #: track, applied to each lap as it is analysed.
+        self.corner_references: list[tuple[float, str]] = []
 
     def analysis_for(self, lap_index: int) -> pipeline.LapAnalysis | None:
         if lap_index not in self._laps:
@@ -77,10 +86,35 @@ class OpenSession:
                 pipeline.analyse_lap(self.session, lap, self.track_length_m)
                 if lap is not None else None
             )
-        return self._laps[lap_index]
+        analysis = self._laps[lap_index]
+        if analysis is not None:
+            pipeline.name_corners(analysis, self.corner_references)
+        return analysis
+
+    def rename_corner(self, distance_m: float, name: str) -> None:
+        """Apply a new name immediately, without re-analysing the session."""
+        self.corner_references = [
+            (d, n) for d, n in self.corner_references if d != distance_m
+        ] + [(distance_m, name)]
+        for analysis in self._laps.values():
+            if analysis is not None:
+                pipeline.name_corners(analysis, self.corner_references)
 
     def _lap(self, lap_index: int) -> Lap | None:
         return next((lap for lap in self.session.laps if lap.index == lap_index), None)
+
+    def session_analysis(self) -> pipeline.SessionAnalysis:
+        """Every comparable lap analysed, and the ideal lap built from them.
+
+        Cached: it costs a few tens of milliseconds per lap, so a thirteen-lap
+        race is about half a second. Paid once, on the first request, rather
+        than on opening a session that the user may only want one lap of.
+        """
+        if self._session_analysis is None:
+            self._session_analysis = pipeline.analyse_session(
+                self.session, self.track_length_m
+            )
+        return self._session_analysis
 
     def best_comparable_lap(self, exclude_index: int | None = None) -> Lap | None:
         """The session's fastest comparable lap, ignoring one index.
@@ -125,9 +159,15 @@ class SessionPool:
 
         with catalog.connect() as con:
             track_length = catalog.track_length(con, selection.track_name)
+            references = [
+                (reference.reference_distance_m, reference.name)
+                for reference in catalog.corner_references(con, selection.track_name)
+                if reference.reference_distance_m is not None and reference.name
+            ]
         session = load_session(selection.source_path, with_hash=False)
 
         self._open[session_id] = OpenSession(session_id, session, track_length)
+        self._open[session_id].corner_references = references
         self._touch(session_id)
         self._evict()
         return self._open[session_id]
@@ -141,6 +181,9 @@ class SessionPool:
         while len(self._order) > self._capacity:
             oldest = self._order.pop(0)
             self._open.pop(oldest).close()
+
+    def all(self) -> list[OpenSession]:
+        return list(self._open.values())
 
     def close_all(self) -> None:
         for opened in self._open.values():
@@ -189,8 +232,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.browser.lap_selected.connect(self.show_lap)
         self.splitter.addWidget(self.browser)
 
+        # The centre column: the traces, and under them the corner-by-corner
+        # debrief they support. The table sits below rather than beside because
+        # its rows are read against the same distance axis as the traces.
+        self.centre = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         self.chart = ChartStack()
-        self.splitter.addWidget(self.chart)
+        self.corner_table = CornerTable()
+        self.centre.addWidget(self.chart)
+        self.centre.addWidget(self.corner_table)
+        self.centre.setStretchFactor(0, 3)
+        self.centre.setStretchFactor(1, 1)
+        self.centre.setSizes([620, 260])
+        self.splitter.addWidget(self.centre)
+
+        self.corner_table.corner_selected.connect(self._on_cursor_moved)
+        self.corner_table.corner_zoomed.connect(self.chart.zoom_to)
+        self.corner_table.corner_renamed.connect(self.rename_corner)
 
         # The right column: where the lap happened, and how hard the tyres were
         # worked doing it. Both follow the traces' cursor, and the map drives it
@@ -328,6 +385,7 @@ class MainWindow(QtWidgets.QMainWindow):
             (ComparisonMode.NONE, strings.ACTION_COMPARE_NONE),
             (ComparisonMode.SESSION_BEST, strings.ACTION_COMPARE_BEST),
             (ComparisonMode.PINNED, strings.ACTION_COMPARE_PINNED),
+            (ComparisonMode.IDEAL, strings.ACTION_COMPARE_IDEAL),
         ):
             action = QtGui.QAction(label, self)
             action.setCheckable(True)
@@ -483,11 +541,44 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(strings.CHART_NO_DATA)
             return
 
-        benchmark, benchmark_selection = self._load_benchmark(selection, notes)
+        # The whole session is analysed either way: it costs about 16 ms per
+        # lap, and it is what the corner table's "what is this corner worth"
+        # column is computed from. Cached on the open session, so this is paid
+        # once per file rather than once per lap viewed.
+        ideal = opened.session_analysis().ideal
 
+        benchmark, benchmark_selection, benchmark_trace = None, None, None
         delta = None
-        if benchmark is not None:
-            delta = pipeline.delta_between(benchmark, primary)
+
+        if self._mode is ComparisonMode.IDEAL:
+            if ideal is None:
+                notes.append(strings.IDEAL_UNAVAILABLE)
+            else:
+                delta = pipeline.delta_against_ideal(ideal, primary)
+                benchmark_trace = LapTrace(
+                    label=strings.CHART_LEGEND_IDEAL.format(
+                        time=format_lap_time(ideal.total_time_s),
+                        gap=format_gap(delta.final_delta_s),
+                    ),
+                    grid_m=ideal.grid_m,
+                    elapsed_s=ideal.elapsed_s,
+                    # Only speed is stitched: the ideal lap has no pedal or
+                    # steering trace, because no one ever drove it. Showing an
+                    # invented one would be the first lie in the application.
+                    channels={"Ground Speed": ideal.speed_ms},
+                )
+        else:
+            benchmark, benchmark_selection = self._load_benchmark(selection, notes)
+            if benchmark is not None:
+                delta = pipeline.delta_between(benchmark, primary)
+                benchmark_trace = _trace(
+                    strings.CHART_LEGEND_BENCHMARK.format(
+                        number=benchmark_selection.lap_number,
+                        time=format_lap_time(benchmark.time_s),
+                        gap=format_gap(delta.final_delta_s),
+                    ),
+                    benchmark,
+                )
 
         self.chart.show_laps(
             primary=_trace(
@@ -497,25 +588,68 @@ class MainWindow(QtWidgets.QMainWindow):
                 ),
                 primary,
             ),
-            benchmark=None if benchmark is None else _trace(
-                strings.CHART_LEGEND_BENCHMARK.format(
-                    number=benchmark_selection.lap_number,
-                    time=format_lap_time(benchmark.time_s),
-                    gap=format_gap(delta.final_delta_s),
-                ),
-                benchmark,
-            ),
+            benchmark=benchmark_trace,
             delta_grid_m=None if delta is None else delta.grid_m,
             delta_s=None if delta is None else delta.delta_s,
         )
+        self._show_markers(primary, ideal)
+        self._show_corner_table(primary, benchmark, ideal)
         self._show_side_panels(primary, delta)
-        self._sync_actions(comparing=benchmark is not None)
+        self._sync_actions(comparing=benchmark_trace is not None)
         self._set_warnings(notes)
 
         self.setWindowTitle(strings.WINDOW_TITLE_WITH_SESSION.format(
             track=selection.track_name, car=selection.car_name or "?"
         ))
         self._report(selection, primary, benchmark_selection, delta, started)
+
+    def _show_markers(self, primary: pipeline.LapAnalysis, ideal) -> None:
+        """Corner apexes on every lap, and the ideal lap's seams when shown."""
+        self.chart.set_corner_markers(
+            [corner.apex_distance_m for corner in primary.corners],
+            [corner.label for corner in primary.corners],
+        )
+        seams = []
+        if ideal is not None and self._mode is ComparisonMode.IDEAL:
+            seams = [
+                seam.distance_m
+                for seam in ideal_lap.significant_discontinuities(ideal)
+            ]
+        self.chart.set_seam_markers(seams)
+
+    def _show_corner_table(
+        self,
+        primary: pipeline.LapAnalysis,
+        benchmark: pipeline.LapAnalysis | None,
+        ideal,
+    ) -> None:
+        rows = pipeline.corner_rows(primary, benchmark, ideal)
+        self.corner_table.show_corners(
+            rows,
+            ideal_summary=_ideal_summary(ideal),
+            show_comparison=benchmark is not None,
+            show_ideal=ideal is not None,
+        )
+
+    def rename_corner(
+        self, corner_index: int, distance_m: float, name: str
+    ) -> None:
+        """Store a corner's name and apply it everywhere, at once.
+
+        Written against the track, anchored to the distance, so it survives
+        re-importing every session ever recorded there.
+        """
+        if self._selection is None:
+            return
+        with catalog.connect() as con:
+            catalog.set_corner_name(
+                con, catalog.track_id_for(self._selection.track_name),
+                corner_index, name, distance_m,
+            )
+        for opened in self._sessions.all():
+            opened.rename_corner(distance_m, name)
+        logger.info("Corner at %.0f m named %r", distance_m, name)
+        self.show_lap(self._selection)
 
     def _load_benchmark(
         self, selection: LapSelection, notes: list[str]
@@ -619,6 +753,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chart.set_cursor_distance(distance_m)
         self.track_map.set_cursor_distance(distance_m)
         self.friction.set_cursor_distance(distance_m)
+        self.corner_table.select_corner_at(distance_m)
 
     def _report(
         self,
@@ -630,7 +765,7 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> None:
         elapsed_ms = (time.perf_counter() - started) * 1000.0
 
-        if delta is None or benchmark_selection is None:
+        if delta is None:
             self.statusBar().showMessage(strings.STATUS_LAP_LOADED.format(
                 number=selection.lap_number,
                 time=format_lap_time(primary.time_s),
@@ -640,11 +775,17 @@ class MainWindow(QtWidgets.QMainWindow):
             ))
             return
 
+        reference = (
+            strings.STATUS_REFERENCE_IDEAL if benchmark_selection is None
+            else strings.STATUS_REFERENCE_LAP.format(
+                number=benchmark_selection.lap_number
+            )
+        )
         self.statusBar().showMessage(strings.STATUS_LAP_COMPARED.format(
             number=selection.lap_number,
             time=format_lap_time(primary.time_s),
             gap=format_gap(delta.final_delta_s),
-            reference=benchmark_selection.lap_number,
+            reference=reference,
             loss=format_gap(delta.worst_loss_s),
             loss_at=delta.worst_loss_distance_m,
             elapsed=elapsed_ms,
@@ -668,6 +809,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _clear_panels(self) -> None:
         self.chart.clear()
+        self.corner_table.clear()
         self.track_map.clear()
         self.friction.clear()
 
@@ -689,6 +831,27 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._sessions.close_all()
         super().closeEvent(event)
+
+
+def _ideal_summary(ideal) -> str:
+    """The one-line verdict beside the corner table's heading.
+
+    States how many laps contribute, because that is what says how optimistic
+    the target is: one contributing lap means the ideal lap *is* a real lap and
+    is therefore achievable; five means five different things went right on five
+    different occasions.
+    """
+    if ideal is None:
+        return strings.IDEAL_UNAVAILABLE
+    gain = ideal.gain_over_best_real_s
+    if gain is None or ideal.best_real_time_s is None:
+        return ""
+    return strings.IDEAL_SUMMARY.format(
+        time=format_lap_time(ideal.total_time_s),
+        gain=f"{gain:.3f}",
+        best=format_lap_time(ideal.best_real_time_s),
+        n_laps=ideal.n_contributing_laps,
+    )
 
 
 def _trace(label: str, analysis: pipeline.LapAnalysis) -> LapTrace:

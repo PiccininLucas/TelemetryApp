@@ -10,24 +10,27 @@ Runs fully offline. The application makes no network calls of any kind.
 
 > Interface is in Portuguese; code, identifiers and documentation are in English.
 
-**Status: phase 7 of 10.** Ingestion, the historical catalog, the analysis layer,
+**Status: phase 8 of 10.** Ingestion, the historical catalog, the analysis layer,
 and a desktop interface that overlays two laps channel by channel, with the
-delta-t between them, the circuit they were driven on, and the grip envelope
-they used. See [Roadmap](#roadmap).
+delta-t between them, the circuit they were driven on, the grip envelope they
+used, and a corner-by-corner debrief against a theoretical ideal lap. See
+[Roadmap](#roadmap).
 
 ![Main window](docs/screenshots/main-window.png)
 
 *Two laps of the same Monza race. Lap 8 is 0.510 s faster overall but loses
 0.187 s at the Variante del Rettifilo — the only red step in the delta-t row,
-at 990 m, and the only red stretch on the map. The dashed outline behind the
-circuit is the track rebuilt from lateral acceleration alone, with no position
-data: 10 m mean error over a 5.8 km lap.*
+at 990 m, and the only red stretch on the map. The corner names are the user's
+own and are stored per track. The dashed outline behind the circuit is the
+track rebuilt from lateral acceleration alone, with no position data: 10 m mean
+error over a 5.8 km lap.*
 
-![Le Mans](docs/screenshots/le-mans.png)
+![Ideal lap](docs/screenshots/ideal-lap.png)
 
-*The same window at Circuit de la Sarthe. 13 625 m, 4:04.738, and the cursor at
-11 703 m — the Porsche Curves, taken at 196 km/h and 1.4 g with the throttle
-still at 90%.*
+*The same lap against the theoretical ideal. The delta rises to +0.622 s at the
+line, and the "A ganhar" column says where those 0.622 s are: 0.258 at the
+Parabolica, 0.169 at Ascari. Five different laps contribute, which is exactly
+how optimistic the target is.*
 
 ---
 
@@ -431,6 +434,50 @@ two derivations agree, so that is the simulation's grip level rather than a
 fault in this pipeline — worth knowing before anyone reads the number as a
 real-world figure.
 
+### The corner table, and what a corner is worth
+
+Everything above shows what the lap looked like. The table says what to do next.
+Per corner: apex position, minimum and entry speed, braking length, how far
+braking continued past turn-in, and time spent on neither pedal. Coasting is the
+one that pays — it is the cost of an unresolved decision between brake and
+throttle, and it is invisible on a speed trace.
+
+With a comparison loaded it also carries the time and minimum speed each corner
+gave away. With the ideal lap it carries the two columns that matter most:
+which lap of the session drove this corner best, and what matching it is worth.
+That column, read top to bottom, is the practice list.
+
+**Corner names are anchored to a distance, not to a corner number.** The number
+shifts the moment the detector finds one more or one fewer corner — a wet lap, a
+lap with a spin, a lap where two corners joined by a throttle burst failed to
+separate. A name pinned to an index would then move to the wrong corner and
+quietly stay wrong. Names are stored per track and survive re-importing every
+session ever recorded there.
+
+### The ideal lap
+
+The lap is cut into segments — boundaries midway along the straight between one
+apex and the next, never at an apex, so a corner's braking, apex and exit stay
+in one segment — and each segment is credited to whichever lap was fastest
+through it.
+
+**It is a target, not a record, and the interface says so.** Exit speed from one
+segment conditions entry into the next, so a lap that was quickest through
+segment 3 may have been quickest precisely because it sacrificed the entry to
+segment 4. The summary line states how many laps contribute, because that is
+how optimistic the target is: one means the ideal lap *is* a real lap. The
+seams where the stitched speed trace jumps are marked on the chart rather than
+smoothed away — they are the evidence that the lap is synthetic.
+
+Drawing a delta against it exposed a defect in the phase-4 stitching: elapsed
+time was spread linearly across each segment, which assumes constant speed
+through it. A Monza segment runs from 275 km/h on the straight to 58 km/h at the
+apex, so the ideal lap's clock was about a second wrong in the middle of every
+segment. Invisible in the lap total — that is the sum of the segment times
+either way — and the dominant term in any delta drawn against it. Using each
+winning lap's own elapsed profile instead took the worst apparent loss against
+the ideal from a fictitious +1.076 s down to the real +0.622 s at the line.
+
 ### Layering
 
 `analysis` imports numpy, scipy and the standard library — nothing else.
@@ -539,7 +586,7 @@ strips those fields and writes a new file rather than modifying the original.
 | 5 | Minimal UI: session browser + speed trace | ✅ done |
 | 6 | Synchronised multi-channel charts + delta-t | ✅ done |
 | 7 | Track map + g-g diagram | ✅ done |
-| 8 | Corner table, persistent naming, theoretical ideal lap | |
+| 8 | Corner table, persistent naming, theoretical ideal lap | ✅ done |
 | 9 | Consistency panel | |
 | 10 | Export (PNG/CSV/PDF), demo dataset, docs | |
 

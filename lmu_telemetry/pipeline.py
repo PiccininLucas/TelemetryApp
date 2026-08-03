@@ -17,6 +17,7 @@ The per-lap pipeline, in order:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -413,6 +414,131 @@ def transition_quality(analysis: LapAnalysis) -> float:
     if analysis.lateral_g is None or analysis.longitudinal_g is None:
         return 0.0
     return friction.transition_quality(analysis.lateral_g, analysis.longitudinal_g)
+
+
+@dataclass(frozen=True, slots=True)
+class CornerRow:
+    """One corner of the lap being shown, with everything the table reports.
+
+    Assembled here rather than in the widget because it draws on three sources
+    at once - the lap's own measurements, the comparison lap, and the ideal
+    lap's segments - and a table widget that reached into all three would be
+    doing the analysis rather than displaying it.
+
+    Attributes:
+        corner: The measured corner.
+        delta_s: Time through this corner relative to the comparison lap.
+            Positive means slower. None when nothing is being compared.
+        speed_delta_ms: Minimum-speed difference against the comparison lap.
+        best_lap_index: Which lap of the session owns this corner's segment in
+            the ideal lap.
+        gain_s: What this corner's own best is worth against the lap on screen.
+    """
+
+    corner: Corner
+    delta_s: float | None = None
+    speed_delta_ms: float | None = None
+    best_lap_index: int | None = None
+    gain_s: float | None = None
+
+
+def name_corners(
+    analysis: LapAnalysis,
+    references: Sequence[tuple[float, str]],
+    tolerance_m: float = 50.0,
+) -> LapAnalysis:
+    """Attach the user's corner names to an analysed lap, matched by distance."""
+    analysis.corners = corners.apply_names_by_distance(
+        analysis.corners, references, tolerance_m
+    )
+    return analysis
+
+
+def corner_rows(
+    analysis: LapAnalysis,
+    benchmark: LapAnalysis | None = None,
+    ideal: ideal_lap.IdealLap | None = None,
+) -> list[CornerRow]:
+    """Build the corner table's rows.
+
+    The per-corner delta is read off the two laps' elapsed-time curves at the
+    corner's own boundaries, so it is the time the corner actually cost rather
+    than a figure modelled from apex speed. The corner's boundaries come from
+    the lap on screen, and both laps are evaluated over the same metres.
+    """
+    rows: list[CornerRow] = []
+    segments = {
+        segment.start_m: segment
+        for segment in (ideal.segments if ideal is not None else [])
+    }
+
+    for corner in analysis.corners:
+        delta_s = speed_delta = None
+        if benchmark is not None:
+            own = _time_through(analysis, corner.start_distance_m,
+                                corner.end_distance_m)
+            other = _time_through(benchmark, corner.start_distance_m,
+                                  corner.end_distance_m)
+            if own is not None and other is not None:
+                delta_s = own - other
+            speed_delta = _speed_delta(analysis, benchmark, corner)
+
+        segment = _segment_for(segments, corner)
+        gain = None
+        if segment is not None:
+            own = _time_through(analysis, segment.start_m, segment.end_m)
+            if own is not None:
+                # What the corner is worth: this lap's time through the segment
+                # minus the best any lap managed. Zero when this lap owns it.
+                gain = own - segment.best_time_s
+
+        rows.append(CornerRow(
+            corner=corner,
+            delta_s=delta_s,
+            speed_delta_ms=speed_delta,
+            best_lap_index=None if segment is None else segment.best_lap_index,
+            gain_s=gain,
+        ))
+
+    return rows
+
+
+def _time_through(
+    analysis: LapAnalysis, start_m: float, end_m: float
+) -> float | None:
+    if not len(analysis.grid_m) or end_m <= start_m:
+        return None
+    start = float(np.interp(start_m, analysis.grid_m, analysis.elapsed_s))
+    end = float(np.interp(end_m, analysis.grid_m, analysis.elapsed_s))
+    return end - start if np.isfinite(start) and np.isfinite(end) else None
+
+
+def _speed_delta(
+    analysis: LapAnalysis, benchmark: LapAnalysis, corner: Corner
+) -> float | None:
+    """Minimum speed through the corner's window, on each lap.
+
+    Taken as the minimum over the window rather than the speed at this lap's
+    apex distance: the other lap's slowest point is a metre or two away, and
+    sampling it at the wrong metre would report a difference that is really
+    just the apex having moved.
+    """
+    window = ((analysis.grid_m >= corner.start_distance_m)
+              & (analysis.grid_m <= corner.end_distance_m))
+    other_window = ((benchmark.grid_m >= corner.start_distance_m)
+                    & (benchmark.grid_m <= corner.end_distance_m))
+    if not np.any(window) or not np.any(other_window):
+        return None
+    return float(np.min(analysis.speed_ms[window])
+                 - np.min(benchmark.speed_ms[other_window]))
+
+
+def _segment_for(segments: dict[float, ideal_lap.Segment], corner: Corner):
+    """The ideal lap's segment containing a corner's apex."""
+    for start_m, segment in segments.items():
+        if start_m <= corner.apex_distance_m <= segment.end_m:
+            return segment
+    return None
 
 
 def pedal_states(

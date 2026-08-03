@@ -26,6 +26,7 @@ rest of the application beyond the `Corner` value object.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -500,10 +501,62 @@ def match_corners(
 
 
 def apply_names(corners: list[Corner], names: dict[int, str]) -> list[Corner]:
-    """Return the corners with the user's names attached."""
+    """Return the corners with the user's names attached, matched by index."""
     from dataclasses import replace
 
     return [
         replace(corner, name=names.get(corner.index, corner.name))
         for corner in corners
+    ]
+
+
+def apply_names_by_distance(
+    corners: list[Corner],
+    references: Sequence[tuple[float, str]],
+    tolerance_m: float = 50.0,
+) -> list[Corner]:
+    """Attach names to corners by where they are, not by their position in the list.
+
+    Corner *indices* shift the moment the detector finds one more or one fewer
+    corner - a wet lap, a lap with a spin, a lap where two corners joined by a
+    throttle burst failed to separate. A name pinned to an index would then move
+    to the wrong corner and quietly stay wrong. Pinned to a distance from the
+    line it stays put, because that is what a corner actually is.
+
+    Each name is given to at most one corner: the nearest within tolerance. Two
+    names competing for the same corner would otherwise both appear to apply.
+
+    Args:
+        corners: The corners detected on this lap.
+        references: `(distance_m, name)` pairs from the catalog.
+        tolerance_m: How far an apex may move between laps and still be the
+            same corner.
+
+    Returns:
+        The corners, with names attached where one matched.
+    """
+    from dataclasses import replace
+
+    if not corners or not references:
+        return corners
+
+    apexes = np.array([corner.apex_distance_m for corner in corners])
+    names: dict[int, str] = {}
+    taken: set[int] = set()
+
+    for distance, name in references:
+        gaps = np.abs(apexes - distance)
+        # Corners already claimed are removed from consideration rather than
+        # overwritten, so the second name falls to its own next-nearest corner.
+        for index in np.argsort(gaps):
+            if int(index) in taken:
+                continue
+            if gaps[index] <= tolerance_m:
+                names[int(index)] = name
+                taken.add(int(index))
+            break
+
+    return [
+        replace(corner, name=names.get(position, corner.name))
+        for position, corner in enumerate(corners)
     ]

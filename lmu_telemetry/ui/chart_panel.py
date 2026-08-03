@@ -273,6 +273,14 @@ class _Row:
         self.cursor.setVisible(False)
         self.plot.addItem(self.cursor, ignoreBounds=True)
 
+        #: Corner apexes and ideal-lap seams, rebuilt whenever they change.
+        self.markers: list[pg.InfiniteLine] = []
+
+    def clear_markers(self) -> None:
+        for line in self.markers:
+            self.plot.removeItem(line)
+        self.markers = []
+
     def clear_curves(self) -> None:
         for curve in self.curves.values():
             curve.setData([], [])
@@ -322,6 +330,8 @@ class ChartStack(QtWidgets.QWidget):
         self._delta_s: np.ndarray | None = None
         self._enabled_rows: set[str] = set(DEFAULT_ROWS)
         self._rows: dict[str, _Row] = {}
+        self._corner_markers: list[tuple[float, str]] = []
+        self._seam_markers: list[float] = []
         self._build()
 
     # -- construction ------------------------------------------------------
@@ -413,8 +423,11 @@ class ChartStack(QtWidgets.QWidget):
         self._benchmark = None
         self._delta_grid_m = None
         self._delta_s = None
+        self._corner_markers = []
+        self._seam_markers = []
         for row in self._rows.values():
             row.clear_curves()
+            row.clear_markers()
             row.cursor.setVisible(False)
         self.legend.clear()
         self.readout.clear()
@@ -537,6 +550,79 @@ class ChartStack(QtWidgets.QWidget):
             # tells the reader nothing new - the axes are linked.
             row.plot.getAxis("bottom").setStyle(showValues=is_last)
             row.plot.setLabel("bottom", label if is_last else "")
+
+        # Which row carries the marker labels depends on which rows are shown,
+        # and the markers themselves only exist on the distance axis.
+        self._rebuild_markers()
+
+    # -- markers -----------------------------------------------------------
+
+    def set_corner_markers(self, distances_m, labels) -> None:
+        """Draw a faint line at each corner's apex, labelled on the top row.
+
+        Without them, reading a trace means converting metres into corners in
+        your head. The lines are deliberately dim: they are a coordinate
+        system, not data, and must never be mistaken for the traces.
+        """
+        self._corner_markers = list(zip(distances_m, labels, strict=True))
+        self._rebuild_markers()
+
+    def set_seam_markers(self, distances_m) -> None:
+        """Mark where the ideal lap is stitched from a different lap.
+
+        These are the evidence that the target is synthetic, so they are drawn
+        rather than smoothed away.
+        """
+        self._seam_markers = list(distances_m)
+        self._rebuild_markers()
+
+    def _rebuild_markers(self) -> None:
+        top = self.visible_rows()[0] if self.visible_rows() else None
+
+        for key, row in self._rows.items():
+            row.clear_markers()
+            if self._axis_mode is not AxisMode.DISTANCE or self._primary is None:
+                continue
+
+            for distance, label in self._corner_markers:
+                line = pg.InfiniteLine(
+                    pos=float(distance), angle=90, movable=False,
+                    pen=pg.mkPen(theme.BORDER, width=1,
+                                 style=QtCore.Qt.PenStyle.DotLine),
+                    label=label if key == top else None,
+                    labelOpts={"position": 0.04, "color": theme.TEXT_DISABLED,
+                               "movable": False},
+                )
+                row.plot.addItem(line, ignoreBounds=True)
+                row.markers.append(line)
+
+            for distance in self._seam_markers:
+                line = pg.InfiniteLine(
+                    pos=float(distance), angle=90, movable=False,
+                    pen=pg.mkPen(theme.WARNING, width=1,
+                                 style=QtCore.Qt.PenStyle.DashLine),
+                )
+                row.plot.addItem(line, ignoreBounds=True)
+                row.markers.append(line)
+
+    def zoom_to(self, start_m: float, end_m: float, margin_fraction: float = 0.3) -> None:
+        """Frame one stretch of the lap, with room either side.
+
+        The margin is what makes the view useful: a corner shown edge to edge
+        hides the braking that set it up and the exit that pays for it.
+        """
+        if self._anchor is None or self._primary is None or end_m <= start_m:
+            return
+        margin = (end_m - start_m) * margin_fraction
+        if self._axis_mode is AxisMode.DISTANCE:
+            self._anchor.plot.setXRange(start_m - margin, end_m + margin,
+                                        padding=0.0)
+            return
+        elapsed = self._primary.elapsed_s
+        grid = self._primary.grid_m
+        low = float(np.interp(start_m - margin, grid, elapsed))
+        high = float(np.interp(end_m + margin, grid, elapsed))
+        self._anchor.plot.setXRange(low, high, padding=0.0)
 
     # -- legend and cursor -------------------------------------------------
 
