@@ -18,6 +18,8 @@ out to take it.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
@@ -25,8 +27,9 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from lmu_telemetry import pipeline
 from lmu_telemetry.analysis import ideal_lap
-from lmu_telemetry.core.errors import TelemetryError
-from lmu_telemetry.core.models import Lap
+from lmu_telemetry.core.errors import SessionNameError, TelemetryError
+from lmu_telemetry.core.models import Lap, LapFlag, parse_session_filename
+from lmu_telemetry.export import charts, report, tables
 from lmu_telemetry.ingest.session_loader import Session, load_session
 from lmu_telemetry.logging_config import get_logger
 from lmu_telemetry.storage import catalog, importer
@@ -58,6 +61,29 @@ class ComparisonMode(str, Enum):
     #: The theoretical ideal lap, stitched from the best segment of every lap
     #: of the session. A target, not a record - see `IdealLap.CAVEAT`.
     IDEAL = "ideal"
+
+
+@dataclass(slots=True)
+class CurrentView:
+    """Everything currently on screen, kept so it can be exported.
+
+    Rebuilding it at export time would mean re-deriving the comparison and the
+    ideal lap, and any divergence between the two derivations would produce a
+    file that does not match what the user was looking at when they asked for
+    it. Recording what was drawn is the only way to guarantee they agree.
+    """
+
+    selection: LapSelection
+    primary: pipeline.LapAnalysis
+    primary_label: str
+    benchmark: pipeline.LapAnalysis | None = None
+    benchmark_label: str = ""
+    #: The same lap without the gap, for prose that supplies the gap itself.
+    benchmark_summary: str = ""
+    delta: object | None = None
+    ideal: object | None = None
+    corner_rows: list = field(default_factory=list)
+    consistency: object | None = None
 
 
 class OpenSession:
@@ -207,6 +233,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self._sessions = SessionPool()
         self._selection: LapSelection | None = None
+        self._current: CurrentView | None = None
         self._pinned: LapSelection | None = None
         self._mode = ComparisonMode.SESSION_BEST
         self.setWindowTitle(strings.WINDOW_TITLE)
@@ -307,6 +334,9 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addAction(refresh)
 
         file_menu.addSeparator()
+        self._build_export_actions(file_menu)
+
+        file_menu.addSeparator()
         quit_action = QtGui.QAction(strings.ACTION_QUIT, self)
         quit_action.setShortcut(QtGui.QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
@@ -319,6 +349,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_panel_actions(view_menu)
         view_menu.addSeparator()
         self._build_comparison_actions(view_menu)
+
+    def _build_export_actions(self, menu: QtWidgets.QMenu) -> None:
+        export_menu = menu.addMenu(strings.MENU_EXPORT)
+        for label, handler in (
+            (strings.ACTION_EXPORT_PNG, self.export_png),
+            (strings.ACTION_EXPORT_CSV, self.export_csv),
+            (strings.ACTION_EXPORT_CORNERS_CSV, self.export_corners_csv),
+            (strings.ACTION_EXPORT_PDF, self.export_pdf),
+        ):
+            action = QtGui.QAction(label, self)
+            action.triggered.connect(handler)
+            export_menu.addAction(action)
 
     def _build_axis_actions(self, menu: QtWidgets.QMenu) -> None:
         axis_group = QtGui.QActionGroup(self)
@@ -609,8 +651,29 @@ class MainWindow(QtWidgets.QMainWindow):
             delta_s=None if delta is None else delta.delta_s,
         )
         self._show_markers(primary, ideal)
-        self._show_corner_table(primary, benchmark, ideal)
+        corner_rows = self._show_corner_table(primary, benchmark, ideal)
         self._show_consistency(opened, selection.lap_index)
+        stint = opened.session_analysis().stint_of(selection.lap_index)
+
+        self._current = CurrentView(
+            selection=selection,
+            primary=primary,
+            primary_label=strings.CHART_LEGEND_PRIMARY.format(
+                number=selection.lap_number,
+                time=format_lap_time(primary.time_s),
+            ),
+            benchmark=benchmark,
+            benchmark_label=(
+                "" if benchmark_trace is None else benchmark_trace.label
+            ),
+            benchmark_summary=_benchmark_summary(
+                benchmark, benchmark_selection, ideal, self._mode
+            ),
+            delta=delta,
+            ideal=ideal,
+            corner_rows=corner_rows,
+            consistency=None if stint is None else stint.report,
+        )
         self._show_side_panels(primary, delta)
         self._sync_actions(comparing=benchmark_trace is not None)
         self._set_warnings(notes)
@@ -639,7 +702,7 @@ class MainWindow(QtWidgets.QMainWindow):
         primary: pipeline.LapAnalysis,
         benchmark: pipeline.LapAnalysis | None,
         ideal,
-    ) -> None:
+    ) -> list:
         rows = pipeline.corner_rows(primary, benchmark, ideal)
         self.corner_table.show_corners(
             rows,
@@ -647,6 +710,7 @@ class MainWindow(QtWidgets.QMainWindow):
             show_comparison=benchmark is not None,
             show_ideal=ideal is not None,
         )
+        return rows
 
     def _show_consistency(self, opened: OpenSession, lap_index: int) -> None:
         """Show the stint the lap on screen belongs to.
@@ -855,6 +919,7 @@ class MainWindow(QtWidgets.QMainWindow):
             action.setEnabled(key in available)
 
     def _clear_panels(self) -> None:
+        self._current = None
         self.chart.clear()
         self.corner_table.clear()
         self.consistency.clear()
@@ -874,11 +939,191 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.warning_banner.hide()
 
+    # -- export ------------------------------------------------------------
+
+    def export_png(self) -> None:
+        """Redraw the traces at print quality and save them."""
+        def render(path: Path, _dialect) -> None:
+            view = self._current
+            charts.export_lap_charts(
+                path, view.primary, view.primary_label,
+                view.benchmark, view.benchmark_label, view.delta,
+                view.primary.corners,
+            )
+
+        self._export(
+            strings.DIALOG_EXPORT_PNG_TITLE, strings.DIALOG_PNG_FILTER,
+            ".png", render,
+        )
+
+    def export_csv(self) -> None:
+        """Every channel of the lap, one row per metre."""
+        def render(path: Path, dialect) -> None:
+            view = self._current
+            tables.write_lap(path, view.primary, view.delta, dialect)
+
+        self._export(
+            strings.DIALOG_EXPORT_CSV_TITLE, strings.DIALOG_CSV_FILTER,
+            ".csv", render,
+        )
+
+    def export_corners_csv(self) -> None:
+        def render(path: Path, dialect) -> None:
+            tables.write_corners(path, self._current.corner_rows, dialect)
+
+        self._export(
+            strings.DIALOG_EXPORT_CORNERS_TITLE, strings.DIALOG_CSV_FILTER,
+            ".csv", render,
+        )
+
+    def export_pdf(self) -> None:
+        """The whole debrief, with its caveats, in one document."""
+        def render(path: Path, _dialect) -> None:
+            report.write_report(path, self._report_context())
+
+        self._export(
+            strings.DIALOG_EXPORT_PDF_TITLE, strings.DIALOG_PDF_FILTER,
+            ".pdf", render,
+        )
+
+    def _export(
+        self, title: str, file_filter: str, suffix: str, render
+    ) -> None:
+        """Ask where to save, then render there.
+
+        One place for the parts every export shares: refusing when there is
+        nothing on screen, appending the extension the user left off, choosing
+        the CSV dialect from the filter they picked, and turning a failure into
+        a message instead of a traceback behind the window.
+        """
+        if self._current is None:
+            self.statusBar().showMessage(strings.ERR_EXPORT_NO_LAP)
+            return
+
+        path_text, chosen = QtWidgets.QFileDialog.getSaveFileName(
+            self, title, self._suggested_name(suffix), file_filter
+        )
+        if not path_text:
+            return
+
+        path = Path(path_text)
+        if not path.suffix:
+            path = path.with_suffix(suffix)
+
+        dialect = (tables.EXCEL_PT_BR
+                   if chosen == strings.DIALOG_CSV_FILTER_EXCEL
+                   else tables.STANDARD)
+
+        self.statusBar().showMessage(strings.STATUS_EXPORTING)
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        try:
+            render(path, dialect)
+        except Exception as exc:  # noqa: BLE001 - a failed save is survivable
+            logger.exception("Export to %s failed", path)
+            self.statusBar().showMessage(
+                strings.ERR_EXPORT_FAILED.format(detail=exc)
+            )
+            QtWidgets.QMessageBox.warning(
+                self, title, strings.ERR_EXPORT_FAILED.format(detail=exc)
+            )
+            return
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        self.statusBar().showMessage(strings.STATUS_EXPORTED.format(path=path))
+
+    def _suggested_name(self, suffix: str) -> str:
+        """A file name that says what is in it without being opened."""
+        if self._current is None:
+            return ""
+        selection = self._current.selection
+        track = "".join(
+            character for character in selection.track_name
+            if character.isalnum() or character in " -_"
+        ).strip().replace(" ", "-")
+        return f"{track}-volta{selection.lap_number}{suffix}"
+
+    def _report_context(self) -> report.ReportContext:
+        """Gather everything the PDF needs from what is currently drawn."""
+        view = self._current
+        selection = view.selection
+
+        gps, _integrated = pipeline.track_paths(view.primary)
+        track_path = None if gps is None or not len(gps.x_m) else (
+            gps.x_m, gps.y_m
+        )
+
+        # The map is coloured the same way it is on screen: by where time moved
+        # when there is a comparison, by pedal state when there is not.
+        map_classes = map_colours = None
+        if track_path is not None:
+            if view.delta is not None:
+                map_classes = pipeline.loss_classes_on(
+                    view.primary.grid_m, view.delta
+                )
+                map_colours = charts.LOSS_COLOURS
+            else:
+                map_classes = pipeline.pedal_states(view.primary)
+                map_colours = charts.PEDAL_COLOURS
+
+        return report.ReportContext(
+            track_name=selection.track_name,
+            car_name=selection.car_name or "?",
+            session_label=strings.session_type_label(
+                _session_code(selection) or "?"
+            ),
+            session_date=selection.session_started_at,
+            lap_number=selection.lap_number,
+            primary=view.primary,
+            primary_label=view.primary_label,
+            benchmark=view.benchmark,
+            benchmark_label=view.benchmark_label,
+            benchmark_summary=view.benchmark_summary,
+            delta=view.delta,
+            corner_rows=view.corner_rows,
+            ideal=view.ideal,
+            consistency=view.consistency,
+            envelope=pipeline.friction_envelope(view.primary),
+            transition_quality=pipeline.transition_quality(view.primary),
+            track_path=track_path,
+            map_classes=map_classes,
+            map_colours=map_colours,
+        )
+
     # -- lifecycle ---------------------------------------------------------
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._sessions.close_all()
         super().closeEvent(event)
+
+
+def _benchmark_summary(
+    benchmark, benchmark_selection, ideal, mode: ComparisonMode
+) -> str:
+    """Name the reference plainly, for prose that states the gap separately."""
+    if mode is ComparisonMode.IDEAL and ideal is not None:
+        return f"{strings.STATUS_REFERENCE_IDEAL} · " \
+               f"{format_lap_time(ideal.total_time_s)}"
+    if benchmark is None or benchmark_selection is None:
+        return ""
+    return (
+        f"{strings.STATUS_REFERENCE_LAP.format(number=benchmark_selection.lap_number)}"
+        f" · {format_lap_time(benchmark.time_s)}"
+    )
+
+
+def _session_code(selection: LapSelection) -> str | None:
+    """The session type letter, read back out of the source file's name.
+
+    `LapSelection` does not carry it - the browser never needed it - and the
+    file name is the authoritative source anyway, since that is where the
+    catalog itself got it from.
+    """
+    try:
+        _track, code, _when = parse_session_filename(Path(selection.source_path))
+    except SessionNameError:
+        return None
+    return code
 
 
 def _ideal_summary(ideal) -> str:

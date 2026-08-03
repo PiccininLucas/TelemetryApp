@@ -10,11 +10,14 @@ Runs fully offline. The application makes no network calls of any kind.
 
 > Interface is in Portuguese; code, identifiers and documentation are in English.
 
-**Status: phase 9 of 10.** Ingestion, the historical catalog, the analysis layer,
-and a desktop interface that overlays two laps channel by channel, with the
+**Status: complete — all 10 phases.** Ingestion, the historical catalog, the analysis layer,
+a desktop interface that overlays two laps channel by channel — with the
 delta-t between them, the circuit they were driven on, the grip envelope they
-used, a corner-by-corner debrief against a theoretical ideal lap, and a
-per-corner repeatability report across a stint. See [Roadmap](#roadmap).
+used, a corner-by-corner debrief against a theoretical ideal lap and a
+per-corner repeatability report across a stint — and export to PNG, CSV and a
+PDF debrief.
+
+Every formula, its assumptions and where it breaks down: **[docs/methodology.md](docs/methodology.md)**.
 
 ![Main window](docs/screenshots/main-window.png)
 
@@ -609,13 +612,90 @@ used only for export, where print quality matters more than interactivity.
 
 ---
 
+## Export
+
+Everything on screen can leave the application, from the interface
+(**Arquivo ▸ Exportar**) or from a script:
+
+```bash
+python scripts/export_session.py "session.duckdb" --lap 8 --out out/
+```
+
+That writes five files: the traces as a print-quality PNG, the lap's channels as
+CSV (one row per metre), the corner table, the consistency ranking, and a PDF
+debrief with all of it plus the charts.
+
+**The exports redraw rather than screenshot.** `pyqtgraph` draws the screen
+because a long session is hundreds of thousands of points and panning has to
+stay fluid; it is the wrong tool for something printed, and a screenshot of a
+dark interface is unreadable on paper. `matplotlib` redraws in a light palette
+at print resolution. That means the two renderers have to agree, so the unit
+conversions live in one place and an exported number always equals the number
+that was on screen.
+
+**CSVs come in two dialects.** Comma delimiter with a dot decimal is what
+pandas, R and every other tool expects; semicolon with a comma decimal is what a
+Brazilian or Italian Excel opens correctly on a double click. Writing only the
+first shows the user's own spreadsheet one column of garbage; writing only the
+second means no tool can read it.
+
+**The PDF carries its own caveats.** A report outlives the session it came from
+and gets forwarded to people who were not there. The ideal lap's "this target is
+not guaranteed to be achievable", the fact that distance is reconstructed rather
+than recorded, and the fact that the acceleration channels arrive mislabelled
+are reproduced in the document rather than assumed to be remembered.
+
+Nothing in `lmu_telemetry/export/` imports Qt, so a report can be produced over
+SSH or in CI. `matplotlib` is pinned to the Agg backend on import.
+
+---
+
 ## Privacy
 
-Session files from online races contain **other people's data**: driver names,
-team names, nationalities and server names. Raw `.duckdb` files are excluded by
-`.gitignore`. Only the anonymised demo dataset produced by
-`scripts/make_demo_dataset.py` (phase 10) is ever committed, and that script
-strips those fields and writes a new file rather than modifying the original.
+**What is actually in the files.** Inspected across all 66 sessions recorded on
+the development machine, `metadata` holds thirteen keys and exactly one of them
+is personal: `DriverName`. `SteamID` is present but reads `0` in every file.
+`CarName` reads like a team — "Inception Racing 2024 #70:LM" — but is the livery
+selected in game, which is published product content. No nationality and no
+server name appear anywhere, and `metadata.value` is the only free-text column
+in the entire schema.
+
+That is **narrower than this project's specification assumed**, and it is
+reported rather than quietly relied on.
+
+Raw `.duckdb` files are excluded by `.gitignore`. The anonymised demo dataset in
+[`data/demo/`](data/demo/) is the only session file ever committed:
+
+```bash
+python scripts/make_demo_dataset.py "session.duckdb"
+```
+
+Two rules, both absolute:
+
+1. **The original is never modified.** Anonymisation copies first and edits the
+   copy. A tool that can damage the only record of a session is worse than no
+   tool.
+2. **The name is removed everywhere, not from a list of fields.** The known keys
+   are cleared by name, and then every free-text cell in the file is swept for
+   any residue — a field the code does not know about is exactly the field that
+   would leak.
+
+The written file is re-opened and checked afterwards, because verifying the
+artefact rather than trusting the writer is the only check that means anything
+before publishing one. `tests/test_export.py` runs that check against the
+committed demo on every test run, and fails if a game update ever adds a
+metadata key nobody has reviewed.
+
+### Trying it without the game
+
+```bash
+python scripts/list_laps.py "data/demo/Autodromo Nazionale Monza_Q_2026-07-30T17_03_52Z.duckdb"
+python scripts/import_session.py "data/demo/"
+.venv\Scripts\python.exe main.py
+```
+
+Monza qualifying, three comparable laps — enough for the comparison, the ideal
+lap and the consistency panel.
 
 ---
 
@@ -632,7 +712,7 @@ strips those fields and writes a new file rather than modifying the original.
 | 7 | Track map + g-g diagram | ✅ done |
 | 8 | Corner table, persistent naming, theoretical ideal lap | ✅ done |
 | 9 | Consistency panel | ✅ done |
-| 10 | Export (PNG/CSV/PDF), demo dataset, docs | |
+| 10 | Export (PNG/CSV/PDF), demo dataset, docs | ✅ done |
 
 Deliberately out of scope: live telemetry, HUD/overlay, 3D, tyre degradation
 modelling and fuel strategy. The ingestion layer is designed so a live source

@@ -1077,3 +1077,52 @@ def test_stint_selector_hides_itself_when_there_is_one_stint(qt_app):
     ])
     assert panel.stint_selector.isVisibleTo(panel)
     assert panel.stint_selector.count() == 2
+
+
+# --------------------------------------------------------------------------- #
+# Export from the interface
+# --------------------------------------------------------------------------- #
+
+def test_export_refuses_when_nothing_is_loaded(qt_app, catalog_with_sessions):
+    """No telemetry file exists behind this catalog, so nothing is drawn."""
+    from lmu_telemetry.ui.main_window import MainWindow
+
+    window = MainWindow()
+    try:
+        assert window._current is None
+        window.export_png()
+        assert window.statusBar().currentMessage() == strings.ERR_EXPORT_NO_LAP
+    finally:
+        window.close()
+
+
+def test_suggested_file_name_says_what_is_in_it(qt_app, catalog_with_sessions):
+    from lmu_telemetry.ui.main_window import CurrentView, MainWindow
+    from lmu_telemetry.ui.session_browser import LapSelection
+
+    window = MainWindow()
+    try:
+        window._current = CurrentView(
+            selection=LapSelection(
+                session_id="x", source_path="s.duckdb", lap_index=8,
+                lap_number=8, track_name="Autodromo Nazionale Monza",
+                car_name="LMP3", time_s=107.0,
+            ),
+            primary=None, primary_label="",
+        )
+        assert window._suggested_name(".pdf") == \
+            "Autodromo-Nazionale-Monza-volta8.pdf"
+    finally:
+        window.close()
+
+
+def test_export_dialects_follow_the_chosen_filter(qt_app):
+    """A standard CSV shows a Portuguese-locale Excel one column of garbage, so
+    the file dialog offers both and the choice has to reach the writer."""
+    from lmu_telemetry.export import tables
+
+    assert strings.DIALOG_CSV_FILTER_EXCEL in strings.DIALOG_CSV_FILTER
+    assert tables.EXCEL_PT_BR.delimiter == ";"
+    assert tables.EXCEL_PT_BR.decimal == ","
+    assert tables.STANDARD.delimiter == ","
+    assert tables.STANDARD.decimal == "."

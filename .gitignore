@@ -11,10 +11,12 @@ cache/
 *.parquet
 *.duckdb.wal
 
-# Raw session files never belong in the repository. They contain driver names,
-# team names and server names of other people (online races). Only the
-# anonymised demo dataset produced by scripts/make_demo_dataset.py is tracked,
-# and it lives under data/demo/.
+# Raw session files never belong in the repository: metadata.DriverName holds
+# the driver's real name. Inspecting all 66 sessions recorded here found no
+# other personal field - no team, nationality or server name, contrary to what
+# this project's specification assumed - but the rule stands regardless, since
+# a game update could add one. Only the anonymised demo dataset produced by
+# scripts/make_demo_dataset.py is tracked, and it lives under data/demo/.
 *.duckdb
 !data/demo/*.duckdb
 

@@ -352,6 +352,136 @@ CONSISTENCY_PLOT_EMPTY = "Selecione uma curva para ver volta a volta."
 CONSISTENCY_LEGEND_MEAN = "média"
 CONSISTENCY_LEGEND_BAND = "±1σ"
 
+# --- Export -----------------------------------------------------------------
+MENU_EXPORT = "&Exportar"
+ACTION_EXPORT_PNG = "Gráficos em &PNG..."
+ACTION_EXPORT_CSV = "Dados da volta em &CSV..."
+ACTION_EXPORT_CORNERS_CSV = "Tabela de c&urvas em CSV..."
+ACTION_EXPORT_PDF = "&Relatório em PDF..."
+
+DIALOG_EXPORT_PNG_TITLE = "Salvar gráficos"
+DIALOG_EXPORT_CSV_TITLE = "Salvar dados da volta"
+DIALOG_EXPORT_CORNERS_TITLE = "Salvar tabela de curvas"
+DIALOG_EXPORT_PDF_TITLE = "Salvar relatório"
+DIALOG_PNG_FILTER = "Imagem PNG (*.png)"
+DIALOG_PDF_FILTER = "Documento PDF (*.pdf)"
+#: Two dialects, because a CSV is opened by two very different things. The
+#: first is what pandas, R and every other tool expect; the second is what a
+#: Brazilian or Italian Excel opens correctly on a double click.
+DIALOG_CSV_FILTER = "CSV padrão (*.csv);;CSV para Excel pt-BR (*.csv)"
+DIALOG_CSV_FILTER_EXCEL = "CSV para Excel pt-BR (*.csv)"
+
+STATUS_EXPORTING = "Exportando..."
+STATUS_EXPORTED = "Salvo em {path}"
+ERR_EXPORT_FAILED = "Não foi possível salvar: {detail}"
+ERR_EXPORT_NO_LAP = "Nenhuma volta carregada para exportar."
+
+# --- CSV column headers -----------------------------------------------------
+CSV_DISTANCE = "distancia_m"
+CSV_ELAPSED = "tempo_s"
+CSV_SPEED = "velocidade_kmh"
+CSV_THROTTLE = "acelerador_pct"
+CSV_BRAKE = "freio_pct"
+CSV_STEERING = "volante_pct"
+CSV_GEAR = "marcha"
+CSV_RPM = "motor_rpm"
+CSV_LATERAL_G = "aceleracao_lateral_g"
+CSV_LONGITUDINAL_G = "aceleracao_longitudinal_g"
+CSV_DELTA = "delta_s"
+
+CSV_CORNER = "curva"
+CSV_CORNER_APEX = "apice_m"
+CSV_CORNER_MIN_SPEED = "v_min_kmh"
+CSV_CORNER_ENTRY_SPEED = "v_entrada_kmh"
+CSV_CORNER_BRAKING = "frenagem_m"
+CSV_CORNER_TRAIL = "trail_m"
+CSV_CORNER_COASTING = "inercia_s"
+CSV_CORNER_DELTA = "delta_s"
+CSV_CORNER_SPEED_DELTA = "delta_v_min_kmh"
+CSV_CORNER_BEST_LAP = "melhor_volta"
+CSV_CORNER_GAIN = "a_ganhar_s"
+
+CSV_CONSISTENCY_CORNER = "curva"
+CSV_CONSISTENCY_LAPS = "voltas"
+CSV_CONSISTENCY_BRAKING_STD = "sigma_frenagem_m"
+CSV_CONSISTENCY_SPEED_STD = "sigma_v_min_kmh"
+CSV_CONSISTENCY_THROTTLE_STD = "sigma_acelerador_m"
+CSV_CONSISTENCY_TIME_LOST = "perda_s_por_volta"
+CSV_CONSISTENCY_PATTERN = "padrao"
+
+# --- PDF report -------------------------------------------------------------
+PDF_TITLE = "Relatório de sessão"
+PDF_SUBTITLE = "{track} · {car} · {session} · {date}"
+PDF_SECTION_LAP = "Volta analisada"
+PDF_SECTION_CHARTS = "Traçados"
+PDF_SECTION_CORNERS = "Curva a curva"
+PDF_SECTION_CONSISTENCY = "Consistência do stint"
+PDF_SECTION_NOTES = "Como estes números foram obtidos"
+
+PDF_LAP_LINE = "Volta {number} · {time} · {length:.0f} m · {n_corners} curvas"
+PDF_COMPARISON_LINE = "Referência: {reference} · diferença {gap} s"
+
+#: Column headers for the PDF only.
+#:
+#: The report is set in Helvetica, whose standard encoding is WinAnsi, and
+#: WinAnsi has no Greek: a "σ" comes out as "s" and a "Δ" as "D", which turns
+#: "σ frenagem" into "s frenagem" and "Δt" into "D t". Embedding a Unicode font
+#: to print two glyphs would add a font file to the repository for no gain, so
+#: the report spells the words instead. The screen keeps the symbols.
+PDF_COLUMN_DELTA = "Dif. t (s)"
+PDF_COLUMN_BRAKING_STD = "Desvio frenagem (m)"
+PDF_COLUMN_SPEED_STD = "Desvio V mín (km/h)"
+PDF_CONSISTENCY_SUMMARY = (
+    "{n_laps} voltas · mediana {median} · desvio dos tempos {std:.3f} s · "
+    "{gain:.2f} s/volta disponíveis"
+)
+PDF_IDEAL_LINE = (
+    "Volta ideal {time} ({gain} s abaixo da melhor real), com {n_laps} voltas "
+    "contribuindo."
+)
+PDF_GG_LINE = (
+    "Envelope de aderência: {lateral:.2f} g lateral, {braking:.2f} g de "
+    "frenagem, {acceleration:.2f} g de tração · {fill:.0%} preenchido · "
+    "{transitions:.0%} de transições com os dois eixos carregados."
+)
+PDF_NO_CONSISTENCY = "Voltas insuficientes no stint para medir consistência."
+PDF_FOOTER = "LMU Telemetry Analyzer · gerado em {generated} · 100% offline"
+
+#: Reproduced in every report, because a target that is not achievable must not
+#: be read as one that is.
+PDF_NOTE_IDEAL = (
+    "A volta ideal é costurada com o melhor trecho de cada volta. A velocidade "
+    "de saída de um trecho condiciona a entrada no seguinte, então o alvo não "
+    "é garantidamente possível."
+)
+PDF_NOTE_DISTANCE = (
+    "A distância é reconstruída integrando a velocidade a 100 Hz e reescalada "
+    "para fechar no comprimento conhecido da pista. Toda comparação entre "
+    "voltas acontece no domínio da distância, nunca no do tempo."
+)
+PDF_NOTE_ACCELERATION = (
+    "Os canais 'G Force Lat' e 'G Force Long' do arquivo estão trocados entre "
+    "si e negados; a correção é aplicada na ingestão e foi verificada contra "
+    "dV/dt e contra a assimetria das rodas."
+)
+
+# --- Anonymisation ----------------------------------------------------------
+ANON_TITLE = "ANONIMIZAÇÃO DE SESSÃO"
+ANON_SOURCE = "Origem"
+ANON_DESTINATION = "Destino"
+ANON_FIELD_REPLACED = "{key}: {before} → {after}"
+ANON_CELLS_SCRUBBED = "{n} outras células continham o nome e foram substituídas"
+ANON_NOTHING_FOUND = "Nenhuma ocorrência residual do nome no restante do arquivo."
+ANON_DONE = "Arquivo anonimizado gravado. O original não foi tocado."
+ANON_REFUSE_OVERWRITE = (
+    "O destino já existe: {path}. Use --force para substituí-lo. O arquivo de "
+    "origem nunca é modificado."
+)
+ANON_SAME_PATH = (
+    "Origem e destino são o mesmo arquivo. A anonimização sempre grava um "
+    "arquivo novo."
+)
+
 # --- Panels -----------------------------------------------------------------
 MENU_PANELS = "&Painéis"
 ACTION_PANEL_MAP = "&Traçado"

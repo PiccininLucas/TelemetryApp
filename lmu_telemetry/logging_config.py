@@ -31,6 +31,8 @@ def setup_logging(
             the console is for the user, the file is for diagnosing a bad
             session file after the fact.
     """
+    configure_console()
+
     global _configured
     if _configured:
         return
@@ -51,6 +53,31 @@ def setup_logging(
         root.addHandler(file_handler)
 
     _configured = True
+
+
+def configure_console() -> None:
+    """Make the console able to print the language the interface is written in.
+
+    Every message this project shows a user is in Portuguese, and the Windows
+    console defaults to a legacy code page that cannot encode `ã`, `ç` or `→`.
+    Without this, a report reads "ANONIMIZA??O DE SESS?O" at best and raises
+    `UnicodeEncodeError` in the middle of writing at worst - which is how a
+    script that did its work correctly ends in a traceback.
+
+    Safe to call repeatedly, and a no-op where the streams are already UTF-8 or
+    have been replaced by something without `reconfigure` (pytest's capture,
+    for one).
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            # A stream that refuses to be reconfigured is not worth failing
+            # over: the work still happened, only the accents suffer.
+            pass
 
 
 def get_logger(name: str) -> logging.Logger:
