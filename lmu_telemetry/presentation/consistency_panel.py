@@ -143,7 +143,7 @@ class ConsistencyPanel(QtWidgets.QWidget):
         self.splitter.addWidget(self.table)
 
         self.plot = pg.PlotWidget()
-        self.plot.setBackground(theme.BACKGROUND)
+        self.plot.setBackground(theme.PLOT_BACKGROUND)
         self.plot.setMenuEnabled(False)
         self.plot.showGrid(x=True, y=True, alpha=theme.GRID_ALPHA)
         self.plot.setLabel("bottom", strings.CONSISTENCY_PLOT_AXIS_LAP)
@@ -153,7 +153,7 @@ class ConsistencyPanel(QtWidgets.QWidget):
         # The +-1 sigma band, drawn first so the points sit on top of it.
         self._band = pg.LinearRegionItem(
             orientation="horizontal", movable=False,
-            brush=pg.mkBrush(77, 163, 255, 28), pen=pg.mkPen(None),
+            brush=pg.mkBrush(*theme.TRACE_REFERENCE_RGB, 28), pen=pg.mkPen(None),
         )
         self._band.setZValue(-10)
         self.plot.addItem(self._band)
@@ -169,7 +169,7 @@ class ConsistencyPanel(QtWidgets.QWidget):
             pen=pg.mkPen(theme.TRACE_REFERENCE, width=1.4),
             symbol="o", symbolSize=7,
             symbolBrush=pg.mkBrush(theme.TRACE_REFERENCE),
-            symbolPen=pg.mkPen(theme.BACKGROUND, width=1),
+            symbolPen=pg.mkPen(theme.PLOT_BACKGROUND, width=1),
         )
         self.splitter.addWidget(self.plot)
         self.splitter.setSizes([620, 420])

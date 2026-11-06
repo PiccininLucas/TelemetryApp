@@ -489,6 +489,23 @@ Corner rename: `CornerTable.corner_renamed(index, distance, name)` →
 `MainWindow.rename_corner` → `CatalogGateway.set_corner_name` → every open session
 re-applies names and drops its `SessionAnalysis` → `show_lap` again.
 
+### Theme (`presentation/theme.py`)
+
+Two layers: a `Palette` (four surface steps, three text steps, one accent, the
+corner radius, the type) and semantic roles read from it (`BACKGROUND`, `SURFACE`,
+`SURFACE_RAISED`, `BORDER`, `TEXT*`, `ACCENT`, `PLOT_BACKGROUND`). Panels use the
+roles, never a hex literal. Widgets are transparent by default; only the window,
+the panels (docks and the `#central` card) and the widgets Qt paints itself name a
+surface, which is what lets a panel be a card without every label carrying a
+background.
+
+**Data colours are not in the palette** (reference/comparison/ideal traces, pedal
+states, the gain/loss fill): they mean the same thing whatever the chrome looks
+like. The identity rests on one rule: **the accent is never a data colour**.
+`tests/test_theme.py` holds it (hue distance from every data colour), together
+with AA contrast for text and accent, and a check that the style sheet parses and
+uses only known properties. Dark only; there is no light theme.
+
 ### Rules baked into the UI
 
 - Two laps are only ever compared on the **distance axis**; the time axis action

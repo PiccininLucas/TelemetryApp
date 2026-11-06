@@ -507,7 +507,7 @@ def test_theme_sets_pyqtgraph_globals(qt_app):
     import pyqtgraph as pg
 
     theme.configure_pyqtgraph()
-    assert pg.getConfigOption("background") == theme.BACKGROUND
+    assert pg.getConfigOption("background") == theme.PLOT_BACKGROUND
     assert pg.getConfigOption("foreground") == theme.TEXT_MUTED
 
 
