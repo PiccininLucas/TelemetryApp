@@ -46,7 +46,7 @@ class FrictionPanel(QtWidgets.QWidget):
 
 
         self.plot = pg.PlotWidget()
-        self.plot.setBackground(theme.BACKGROUND)
+        self.plot.setBackground(theme.PLOT_BACKGROUND)
         self.plot.setMenuEnabled(False)
         self.plot.setLabel("left", strings.GG_AXIS_LONGITUDINAL)
         self.plot.setLabel("bottom", strings.GG_AXIS_LATERAL)
@@ -71,7 +71,7 @@ class FrictionPanel(QtWidgets.QWidget):
         # blob with no interior structure at all.
         self._points = pg.ScatterPlotItem(
             size=2.5, pen=None,
-            brush=pg.mkBrush(77, 163, 255, 60), pxMode=True,
+            brush=pg.mkBrush(*theme.TRACE_REFERENCE_RGB, 60), pxMode=True,
         )
         self.plot.addItem(self._points)
 
@@ -81,7 +81,7 @@ class FrictionPanel(QtWidgets.QWidget):
 
         self._cursor = pg.ScatterPlotItem(
             size=10, pen=pg.mkPen(theme.TEXT, width=2),
-            brush=pg.mkBrush(theme.BACKGROUND),
+            brush=pg.mkBrush(theme.PLOT_BACKGROUND),
         )
         self._cursor.setVisible(False)
         self.plot.addItem(self._cursor)

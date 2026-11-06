@@ -209,7 +209,7 @@ class _Row:
     def __init__(self, spec: RowSpec) -> None:
         self.spec = spec
         self.plot = pg.PlotWidget()
-        self.plot.setBackground(theme.BACKGROUND)
+        self.plot.setBackground(theme.PLOT_BACKGROUND)
         self.plot.showGrid(x=True, y=True, alpha=theme.GRID_ALPHA)
         self.plot.setLabel("left", spec.axis_label)
         self.plot.setMenuEnabled(False)

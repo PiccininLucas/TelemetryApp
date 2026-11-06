@@ -102,7 +102,7 @@ class TrackMap(QtWidgets.QWidget):
 
 
         self.plot = pg.PlotWidget()
-        self.plot.setBackground(theme.BACKGROUND)
+        self.plot.setBackground(theme.PLOT_BACKGROUND)
         self.plot.setMenuEnabled(False)
         self.plot.hideAxis("left")
         self.plot.hideAxis("bottom")
@@ -119,14 +119,14 @@ class TrackMap(QtWidgets.QWidget):
 
         # Start and finish, so the map has an orientation.
         self._start = pg.ScatterPlotItem(
-            size=9, pen=pg.mkPen(theme.BACKGROUND, width=1),
+            size=9, pen=pg.mkPen(theme.PLOT_BACKGROUND, width=1),
             brush=pg.mkBrush(theme.TEXT),
         )
         self.plot.addItem(self._start)
 
         self._cursor = pg.ScatterPlotItem(
             size=11, pen=pg.mkPen(theme.TEXT, width=2),
-            brush=pg.mkBrush(theme.BACKGROUND),
+            brush=pg.mkBrush(theme.PLOT_BACKGROUND),
         )
         self._cursor.setVisible(False)
         self.plot.addItem(self._cursor)

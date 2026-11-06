@@ -86,6 +86,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # unless the session being shown had its clock corrected, or a
         # comparison had to be refused.
         central = QtWidgets.QWidget()
+        central.setObjectName("central")  # the theme styles it as a card
         layout = QtWidgets.QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
