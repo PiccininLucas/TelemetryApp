@@ -14,7 +14,10 @@ Dependencies point inward only:
   it reads data through. Knows no file format, no database, no GUI.
 - `infrastructure`: DuckDB ingestion, the catalog and cache, export. Implements
   what the layers above need.
-- `presentation`: the PySide6 interface.
+- `presentation`: the PySide6 interface. It reaches storage, ingestion and
+  export only through the gateways in `application.ports`.
+- `composition.py`: the composition root, the one module allowed to import
+  every layer. It builds the gateways; the entry points hand them in.
 
 Two things rely on this: every formula can be tested against synthetic data with
 the game absent, and a live data source could feed the same pipeline later
@@ -51,24 +54,6 @@ FORBIDDEN_EXTERNAL_INNER = (
     "duckdb", "pandas", "PySide6", "shiboken6", "pyqtgraph",
     "matplotlib", "reportlab", "pyarrow",
 )
-
-#: KNOWN DEBT, not a design. These presentation modules still reach
-#: infrastructure directly: `MainWindow` opens the catalog, loads sessions and
-#: writes exports itself, and `SessionBrowser` queries the catalog. The way out
-#: is to give them gateways (ports in `application`, injected from `main.py`).
-#: The list may only shrink: `test_presentation_debt_is_not_stale` fails when an
-#: entry no longer applies, and any new reach fails `test_layer_dependencies`.
-PRESENTATION_INFRASTRUCTURE_DEBT: dict[str, frozenset[str]] = {
-    f"{PACKAGE}.presentation.main_window": frozenset({
-        f"{PACKAGE}.infrastructure.export",
-        f"{PACKAGE}.infrastructure.ingest.session_loader",
-        f"{PACKAGE}.infrastructure.storage",
-    }),
-    f"{PACKAGE}.presentation.session_browser": frozenset({
-        f"{PACKAGE}.infrastructure.storage",
-    }),
-}
-
 
 def module_name_for(path: Path) -> str:
     """`lmu_telemetry/domain/analysis/delta.py` -> `lmu_telemetry.domain.analysis.delta`."""
@@ -144,13 +129,6 @@ def modules_in(layer: str) -> list[Path]:
     )
 
 
-def _is_debt(importer: str, imported: str) -> bool:
-    return any(
-        imported == allowed or imported.startswith(allowed + ".")
-        for allowed in PRESENTATION_INFRASTRUCTURE_DEBT.get(importer, ())
-    )
-
-
 # --- structure ---------------------------------------------------------------
 
 
@@ -162,12 +140,38 @@ def test_layer_package_exists(layer: str):
 def test_every_module_belongs_to_a_layer():
     """A stray module at the package root would sit outside the rule."""
     strays = [
-        p.name for p in PACKAGE_ROOT.glob("*.py") if p.name != "__init__.py"
+        p.name for p in PACKAGE_ROOT.glob("*.py")
+        if p.name not in ("__init__.py", "composition.py")
     ] + [
         d.name for d in PACKAGE_ROOT.iterdir()
         if d.is_dir() and d.name != "__pycache__" and d.name not in ALLOWED_LAYERS
     ]
     assert strays == [], f"outside every layer: {strays}"
+
+
+def test_only_entry_points_import_the_composition_root():
+    """Wiring is done once, from outside. If a layer imported `composition`, it
+    would be reaching for the concrete classes the gateways exist to hide."""
+    offenders = [
+        module_name_for(p)
+        for p in PACKAGE_ROOT.rglob("*.py")
+        if "__pycache__" not in p.parts
+        and p.name != "composition.py"
+        and any(m == f"{PACKAGE}.composition" or m.startswith(f"{PACKAGE}.composition.")
+                for m in imports_of(p))
+    ]
+    assert offenders == [], f"imports the composition root: {offenders}"
+
+
+def test_adapters_are_reached_only_by_the_composition_root():
+    offenders = [
+        module_name_for(p)
+        for p in PACKAGE_ROOT.rglob("*.py")
+        if "__pycache__" not in p.parts
+        and p.name not in ("composition.py", "adapters.py")
+        and f"{PACKAGE}.infrastructure.adapters" in imports_of(p)
+    ]
+    assert offenders == [], f"imports infrastructure.adapters: {offenders}"
 
 
 # --- dependency rule ---------------------------------------------------------
@@ -185,25 +189,11 @@ def test_layer_dependencies(layer: str):
             target = layer_of(imported)
             if target is None or target in allowed:
                 continue
-            if layer == "presentation" and _is_debt(importer, imported):
-                continue
             offenders.append(f"{importer} imports {imported}")
 
     assert offenders == [], (
         f"`{layer}` may only depend on {sorted(allowed)}:\n  " + "\n  ".join(offenders)
     )
-
-
-def test_presentation_debt_is_not_stale():
-    """Remove an entry once the module stops reaching infrastructure."""
-    stale: list[str] = []
-    for importer, allowed in PRESENTATION_INFRASTRUCTURE_DEBT.items():
-        path = path_for(importer)
-        imports = imports_of(path) if path else set()
-        for entry in sorted(allowed):
-            if not any(i == entry or i.startswith(entry + ".") for i in imports):
-                stale.append(f"{importer}: {entry}")
-    assert stale == [], "debt entries no longer needed:\n  " + "\n  ".join(stale)
 
 
 @pytest.mark.parametrize(

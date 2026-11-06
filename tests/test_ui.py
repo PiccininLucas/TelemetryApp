@@ -20,6 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets  # noqa: E402
 
 from lmu_telemetry.domain.models import Lap, LapFlag, SessionInfo  # noqa: E402
+from lmu_telemetry.composition import build_gateways  # noqa: E402
 from lmu_telemetry.infrastructure.storage import catalog, paths  # noqa: E402
 from lmu_telemetry.shared import strings  # noqa: E402
 from lmu_telemetry.presentation import theme  # noqa: E402
@@ -162,7 +163,7 @@ def test_browser_shows_a_placeholder_when_the_catalog_is_empty(
     qt_app, tmp_path, monkeypatch
 ):
     monkeypatch.setenv(paths.ENV_DATA_DIR, str(tmp_path / "empty"))
-    browser = SessionBrowser()
+    browser = SessionBrowser(build_gateways().catalog)
 
     assert browser.reload() == 0
     assert browser.placeholder.isVisible() or not browser.tree.isVisible()
@@ -173,7 +174,7 @@ def test_browser_groups_by_track_then_car_then_session(
 ):
     """Laps are only comparable within one track and one car, so that is the
     order that puts comparable things next to each other."""
-    browser = SessionBrowser()
+    browser = SessionBrowser(build_gateways().catalog)
     assert browser.reload() == 2
 
     assert browser.tree.topLevelItemCount() == 1
@@ -189,7 +190,7 @@ def test_browser_groups_by_track_then_car_then_session(
 
 
 def test_browser_shows_each_session_s_best_lap(qt_app, catalog_with_sessions):
-    browser = SessionBrowser()
+    browser = SessionBrowser(build_gateways().catalog)
     browser.reload()
 
     car = browser.tree.topLevelItem(0).child(0)
@@ -203,7 +204,7 @@ def test_default_selection_is_not_the_shortest_lap(qt_app, catalog_with_sessions
     """A session's tail is a partial lap of a few seconds. Picking the globally
     shortest lap time would select one of those every time - which is exactly
     what the first version of this did."""
-    browser = SessionBrowser()
+    browser = SessionBrowser(build_gateways().catalog)
     browser.reload()
 
     assert browser.select_default_lap() is True
@@ -219,7 +220,7 @@ def test_default_selection_prefers_the_most_recent_session(
 ):
     """Almost certainly the lap the user just drove, which is what they came to
     look at - even though a previous session was faster."""
-    browser = SessionBrowser()
+    browser = SessionBrowser(build_gateways().catalog)
     browser.reload()
     browser.select_default_lap()
 
@@ -230,7 +231,7 @@ def test_default_selection_prefers_the_most_recent_session(
 
 def test_selecting_a_non_lap_node_yields_nothing(qt_app, catalog_with_sessions):
     """Clicking a track or a car must not try to load telemetry."""
-    browser = SessionBrowser()
+    browser = SessionBrowser(build_gateways().catalog)
     browser.reload()
 
     browser.tree.setCurrentItem(browser.tree.topLevelItem(0))
@@ -239,7 +240,7 @@ def test_selecting_a_non_lap_node_yields_nothing(qt_app, catalog_with_sessions):
 
 def test_default_selection_on_an_empty_catalog(qt_app, tmp_path, monkeypatch):
     monkeypatch.setenv(paths.ENV_DATA_DIR, str(tmp_path / "empty2"))
-    browser = SessionBrowser()
+    browser = SessionBrowser(build_gateways().catalog)
     browser.reload()
 
     assert browser.select_default_lap() is False
@@ -253,7 +254,7 @@ def test_browser_survives_an_unreadable_catalog(qt_app, tmp_path, monkeypatch):
     (data_dir / "catalog.duckdb").write_bytes(b"not a database at all" * 50)
     monkeypatch.setenv(paths.ENV_DATA_DIR, str(data_dir))
 
-    browser = SessionBrowser()
+    browser = SessionBrowser(build_gateways().catalog)
     assert browser.reload() == 0
 
 
@@ -509,7 +510,7 @@ def test_main_window_builds_and_closes_cleanly(qt_app, catalog_with_sessions):
     viewed."""
     from lmu_telemetry.presentation.main_window import MainWindow
 
-    window = MainWindow()
+    window = MainWindow(build_gateways())
     try:
         assert window.windowTitle()
         assert window.splitter.count() == 3  # browser, traces, side panels
@@ -562,7 +563,7 @@ def test_importing_runs_off_the_interface_thread(qt_app, tmp_path, monkeypatch):
 
     monkeypatch.setattr(importer, "import_session_file", recording)
 
-    window = MainWindow()
+    window = MainWindow(build_gateways())
     try:
         window._import(_demo_session_files())
         assert window._import_thread is not None
@@ -581,7 +582,7 @@ def test_a_second_import_is_refused_while_one_is_running(qt_app, tmp_path, monke
     from lmu_telemetry.presentation.main_window import MainWindow
 
     monkeypatch.setenv(paths.ENV_DATA_DIR, str(tmp_path / "data"))
-    window = MainWindow()
+    window = MainWindow(build_gateways())
     try:
         window._import(_demo_session_files())
         first = window._import_thread
@@ -602,7 +603,7 @@ def test_an_import_that_fails_is_reported_not_swallowed(qt_app, tmp_path, monkey
     broken.write_bytes(b"not a database")
 
     results = []
-    worker = ImportWorker([broken])
+    worker = ImportWorker([broken], build_gateways().importer)
     worker.finished.connect(lambda imported, failures: results.append((imported, failures)))
     worker.run()  # direct call: same code, no thread needed to check the outcome
 
@@ -622,12 +623,15 @@ def test_session_pool_holds_two_files_and_evicts_the_third(qt_app):
         def close(self):
             self.closed = True
 
-    pool = SessionPool(capacity=2)
+    gateways = build_gateways()
+    pool = SessionPool(gateways.sessions, gateways.catalog, capacity=2)
     opened = {}
     for name in ("a", "b", "c"):
         session = FakeSession()
         opened[name] = session
-        pool._open[name] = OpenSession(name, session, None)
+        pool._open[name] = OpenSession(
+            name, session, None, gateways.catalog.name_match_tolerance_m()
+        )
         pool._touch(name)
         pool._evict()
 
@@ -642,7 +646,7 @@ def test_comparison_mode_survives_having_nothing_to_compare(qt_app,
     crash."""
     from lmu_telemetry.presentation.main_window import ComparisonMode, MainWindow
 
-    window = MainWindow()
+    window = MainWindow(build_gateways())
     try:
         # Nothing selected, so the mode change is not followed by a redraw that
         # would overwrite the message with its own.
@@ -663,7 +667,7 @@ def test_time_axis_is_disabled_while_two_laps_are_drawn(qt_app,
     so an overlay on that axis would invite a comparison that says nothing."""
     from lmu_telemetry.presentation.main_window import MainWindow
 
-    window = MainWindow()
+    window = MainWindow(build_gateways())
     try:
         window._sync_actions(comparing=True)
         assert not window.action_time.isEnabled()
@@ -967,7 +971,10 @@ def test_renaming_from_another_lap_replaces_the_name_instead_of_adding_one(qt_ap
     competing for one corner."""
     from lmu_telemetry.presentation.main_window import OpenSession
 
-    opened = OpenSession("s", session=None, track_length_m=None)
+    opened = OpenSession(
+        "s", session=None, track_length_m=None,
+        name_match_tolerance_m=build_gateways().catalog.name_match_tolerance_m(),
+    )
     opened.corner_references = [(900.0, "Turn 1"), (2400.0, "Lesmo 1")]
 
     opened.rename_corner(903.0, "Primeira")
@@ -1195,7 +1202,7 @@ def test_export_refuses_when_nothing_is_loaded(qt_app, catalog_with_sessions):
     """No telemetry file exists behind this catalog, so nothing is drawn."""
     from lmu_telemetry.presentation.main_window import MainWindow
 
-    window = MainWindow()
+    window = MainWindow(build_gateways())
     try:
         assert window._current is None
         window.export_png()
@@ -1208,7 +1215,7 @@ def test_suggested_file_name_says_what_is_in_it(qt_app, catalog_with_sessions):
     from lmu_telemetry.presentation.main_window import CurrentView, MainWindow
     from lmu_telemetry.presentation.session_browser import LapSelection
 
-    window = MainWindow()
+    window = MainWindow(build_gateways())
     try:
         window._current = CurrentView(
             selection=LapSelection(

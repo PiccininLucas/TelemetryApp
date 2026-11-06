@@ -114,14 +114,19 @@ lmu_telemetry/
   domain/                   numpy/scipy/stdlib only
     models.py                 SessionInfo, Lap, LapFlag, Corner, Stint, filename parser, SHA-256
     units.py                  unit conversion driven by the file's own `unit` column
+    records.py                SessionRow, LapRow, CornerReference (catalog rows)
     resampling.py             resample_to_grid, step_interpolate (pure numpy)
     analysis/                 numpy in, numbers out
       distance.py  resample.py  delta.py  corners.py  ideal_lap.py
       consistency.py  friction.py  trackmap.py
   application/              joins the two; knows no file format, database or GUI
     pipeline.py               the seam: session → analysis; what UI and export call
-    ports.py                  SessionData protocol the pipeline reads through
+    ports.py                  SessionData, and the gateways the UI works through
+    reporting.py              ReportContext: what a PDF report is built from
+  composition.py            composition root: builds the gateways; nothing imports it
   infrastructure/           implements what the inner layers need
+    adapters.py               DuckDbCatalog, FileSessionLoader, DuckDbSessionImporter,
+                              FileExporter, build_gateways()
     ingest/                   the only layer that knows the file format
       duckdb_reader.py          read-only connection, quote_ident, column reads
       channel_registry.py       layout detection (A/B/C/D), ChannelInfo, read_channel
@@ -167,21 +172,26 @@ are checked **transitively**):
 3. `domain` and `application` may not reach duckdb, pandas, Qt, pyqtgraph,
    matplotlib, reportlab or pyarrow — directly or through any chain of imports.
 4. `infrastructure` and `presentation` may import the three inner layers, never
-   each other.
+   each other. The interface gets storage, ingestion and export through the
+   gateways in `application.ports`.
 5. `domain.analysis` may not import any `strings` module (it returns numbers;
    text is the caller's job).
 6. Nothing in the package may import `scripts/expected_schema.py`.
-7. Every module under `lmu_telemetry/` belongs to one of the five layers.
+7. Every module under `lmu_telemetry/` belongs to one of the five layers, apart
+   from `composition.py`, which nothing inside the package may import.
 
 `shared.strings` is reachable from every layer. That is allowed because it is
 pure data; `test_strings_module_is_a_leaf` fails if it ever imports anything from
 the project.
 
-**Known debt.** `presentation/main_window.py` (catalog, session loading, export)
-and `presentation/session_browser.py` (catalog) still import `infrastructure`
-directly. They are listed in `PRESENTATION_INFRASTRUCTURE_DEBT` in the test; the
-list can only shrink, and any new reach fails the build. The way out is gateways
-(ports in `application`) injected from `main.py`.
+**The interface reaches the outside only through gateways.** `application/ports.py`
+defines `CatalogGateway`, `SessionLoader`, `SessionImporter` and `Exporter`,
+gathered in `Gateways`. `infrastructure/adapters.py` implements them by forwarding
+to the storage, ingestion and export modules, and `composition.py` — the one
+module allowed to import every layer — builds them. `main.py` (and the scripts and
+tests) call `build_gateways()` and hand the result to `MainWindow`. The test
+forbids anything inside the package from importing `composition`, and anything but
+`composition` from importing `infrastructure.adapters`.
 
 ### Why `Session` lives in `infrastructure/ingest/session_loader.py`
 

@@ -35,7 +35,12 @@ Hoje `theme.py` tem constantes de cor soltas e um QSS global. Há estilo fora de
 
 `pyqtgraph` lê as opções globais na criação do widget: o tema precisa ser aplicado antes de qualquer gráfico existir.
 
+## Decisões
+
+- Tema: só escuro, refinado, sem alternância (etapa 0).
+- **Em espera:** a paleta e a tipografia dependem da referência visual que o usuário vai enviar.
+
 ## Decisões em aberto
 
-- Paleta nova ou manter a atual?
+- Paleta nova ou manter a atual? (depende da referência)
 - Fonte embutida no app ou do sistema?

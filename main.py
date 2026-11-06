@@ -74,6 +74,7 @@ check_environment()
 
 from PySide6 import QtWidgets  # noqa: E402
 
+from lmu_telemetry.composition import build_gateways  # noqa: E402
 from lmu_telemetry.shared.config import load_config  # noqa: E402
 from lmu_telemetry.shared.errors import ConfigError  # noqa: E402
 from lmu_telemetry.shared.logging_config import setup_logging  # noqa: E402
@@ -107,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     # Before any widget is built: pyqtgraph reads its globals at construction.
     theme.apply(app)
 
-    window = MainWindow()
+    window = MainWindow(build_gateways())
     window.show()
     return app.exec()
 

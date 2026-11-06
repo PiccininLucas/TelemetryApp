@@ -132,14 +132,14 @@ def _context(session, analysis, primary, primary_label,
     gps, _integrated = pipeline.track_paths(primary)
     track_path = None if gps is None or not len(gps.x_m) else (gps.x_m, gps.y_m)
 
-    map_classes = map_colours = None
+    map_classes = map_scheme = None
     if track_path is not None:
         if delta is not None:
             map_classes = pipeline.loss_classes_on(primary.grid_m, delta)
-            map_colours = charts.LOSS_COLOURS
+            map_scheme = "loss"
         else:
             map_classes = pipeline.pedal_states(primary)
-            map_colours = charts.PEDAL_COLOURS
+            map_scheme = "pedal"
 
     try:
         _track, code, _when = parse_session_filename(session.info.path)
@@ -168,7 +168,7 @@ def _context(session, analysis, primary, primary_label,
         transition_quality=pipeline.transition_quality(primary),
         track_path=track_path,
         map_classes=map_classes,
-        map_colours=map_colours,
+        map_scheme=map_scheme,
     )
 
 
