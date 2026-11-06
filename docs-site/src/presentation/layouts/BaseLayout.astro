@@ -1,0 +1,25 @@
+---
+import "../styles/globals.css";
+import NavLateral from "../components/NavLateral.astro";
+
+interface Props { titulo: string; descricao: string; }
+const { titulo, descricao } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{titulo} | LMU Telemetry</title>
+    <meta name="description" content={descricao} />
+    <link rel="canonical" href={canonical} />
+    <meta name="robots" content="noindex" />
+  </head>
+  <body class="min-h-screen">
+    <a href="#conteudo" class="sr-only focus:not-sr-only focus:absolute focus:m-2 focus:rounded focus:bg-accent focus:px-3 focus:py-2 focus:text-bg">Ir para o conteúdo</a>
+    <div class="mx-auto grid max-w-7xl gap-8 px-4 py-6 md:grid-cols-[17rem_1fr]">
+      <NavLateral />
+      <main id="conteudo" class="min-w-0"><slot /></main>
+    </div>
+  </body>
+</html>

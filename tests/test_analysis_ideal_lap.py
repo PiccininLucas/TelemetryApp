@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.analysis import ideal_lap
-from lmu_telemetry.core.models import Corner
+from lmu_telemetry.domain.analysis import ideal_lap
+from lmu_telemetry.domain.models import Corner
 
 
 def make_corner(index: int, apex: float) -> Corner:
@@ -60,7 +60,7 @@ def test_a_lap_with_no_corners_is_one_segment():
 
 
 def test_boundaries_on_the_synthetic_circuit(synthetic_lap):
-    from lmu_telemetry.analysis import corners as corner_detection
+    from lmu_telemetry.domain.analysis import corners as corner_detection
 
     found = corner_detection.detect_corners(
         synthetic_lap.speed_ms, synthetic_lap.distance_m,
@@ -249,7 +249,7 @@ def test_the_caveat_is_stated_on_the_object():
 def test_ideal_lap_of_identical_laps_equals_the_lap(synthetic_lap):
     """Two identical laps cannot produce a faster ideal lap. Anything else would
     mean the segment arithmetic is inventing time."""
-    from lmu_telemetry.analysis import corners as corner_detection, delta
+    from lmu_telemetry.domain.analysis import corners as corner_detection, delta
 
     found = corner_detection.detect_corners(
         synthetic_lap.speed_ms, synthetic_lap.distance_m,

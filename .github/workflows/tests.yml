@@ -7,10 +7,14 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # The application is developed and used on Windows: paths, the console
+        # code page and Qt's platform plugin all behave differently there, and a
+        # Linux-only run would not see a regression in any of them.
+        os: [ubuntu-latest, windows-latest]
         # 3.14 is the development version; 3.13 guards against accidentally
         # depending on a 3.14-only feature. Every pin in requirements.txt has
         # wheels for both.
@@ -23,6 +27,18 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+
+      - name: Install Qt system libraries
+        # PySide6's wheels link against libEGL, libGL and friends, which the
+        # Ubuntu runner does not ship. Without them `import PySide6.QtGui`
+        # fails at collection time ("libEGL.so.1: cannot open shared object
+        # file"). The tests run on Qt's offscreen platform, so no X server is
+        # needed - only the libraries have to be loadable.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
 
       - name: Install dependencies
         run: |

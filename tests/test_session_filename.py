@@ -13,8 +13,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from lmu_telemetry.core.errors import SessionNameError
-from lmu_telemetry.core.models import parse_session_filename
+from lmu_telemetry.shared.errors import SessionNameError
+from lmu_telemetry.domain.models import parse_session_filename
 
 
 #: Names taken verbatim from a real Telemetry folder.
@@ -118,7 +118,7 @@ def test_rejects_malformed_names(name):
 
 
 def test_session_type_codes_get_portuguese_labels():
-    from lmu_telemetry.ui import strings
+    from lmu_telemetry.shared import strings
 
     assert strings.session_type_label("R") == strings.SESSION_TYPE_RACE
     assert strings.session_type_label("p") == strings.SESSION_TYPE_PRACTICE

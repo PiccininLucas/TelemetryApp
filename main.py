@@ -74,10 +74,13 @@ check_environment()
 
 from PySide6 import QtWidgets  # noqa: E402
 
-from lmu_telemetry.logging_config import setup_logging  # noqa: E402
-from lmu_telemetry.storage import paths  # noqa: E402
-from lmu_telemetry.ui import strings, theme  # noqa: E402
-from lmu_telemetry.ui.main_window import MainWindow  # noqa: E402
+from lmu_telemetry.shared.config import load_config  # noqa: E402
+from lmu_telemetry.shared.errors import ConfigError  # noqa: E402
+from lmu_telemetry.shared.logging_config import setup_logging  # noqa: E402
+from lmu_telemetry.infrastructure.storage import paths  # noqa: E402
+from lmu_telemetry.shared import strings  # noqa: E402
+from lmu_telemetry.presentation import theme  # noqa: E402
+from lmu_telemetry.presentation.main_window import MainWindow  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,6 +91,18 @@ def main(argv: list[str] | None = None) -> int:
     app = QtWidgets.QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName(strings.APP_NAME)
     app.setApplicationDisplayName(strings.APP_NAME)
+
+    # The user's configuration file is read lazily, deep inside the first lap to
+    # be analysed. A mistake in it should be reported here, as what it is, and
+    # not as a traceback from somewhere that looks unrelated.
+    try:
+        load_config()
+    except ConfigError as exc:
+        logging.getLogger(__name__).error("Invalid configuration: %s", exc)
+        QtWidgets.QMessageBox.critical(
+            None, strings.APP_NAME, strings.ERR_CONFIG_INVALID.format(detail=exc)
+        )
+        return 2
 
     # Before any widget is built: pyqtgraph reads its globals at construction.
     theme.apply(app)

@@ -4,7 +4,6 @@
 
 # --- Data access -------------------------------------------------------------
 duckdb==1.5.5           # reads the game's native session files
-pyarrow==25.0.0         # parquet cache backend
 
 # --- Numerics ----------------------------------------------------------------
 numpy==2.5.1

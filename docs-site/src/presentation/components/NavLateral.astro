@@ -1,0 +1,38 @@
+---
+import { etapas } from "../../composition";
+
+const lista = await etapas.listarEtapas();
+const fixas = [
+  { href: "/", rotulo: "Visão geral" },
+  { href: "/diagnostico/", rotulo: "Diagnóstico do front atual" },
+  { href: "/tokens/", rotulo: "Tokens de design" },
+];
+const atual = Astro.url.pathname;
+const ativo = (href: string) => atual === href || atual === href.replace(/\/$/, "");
+const link = "block rounded px-3 py-2 text-sm hover:bg-raised";
+---
+<nav aria-label="Navegação da documentação" class="md:sticky md:top-6 md:self-start">
+  <p class="mb-4 text-sm font-semibold text-muted">LMU Telemetry · Remodelagem do front</p>
+  <ul class="space-y-1">
+    {fixas.map((l) => (
+      <li>
+        <a href={l.href} aria-current={ativo(l.href) ? "page" : undefined}
+           class:list={[link, ativo(l.href) && "bg-raised text-accent"]}>{l.rotulo}</a>
+      </li>
+    ))}
+  </ul>
+  <p class="mb-2 mt-6 px-3 text-xs font-semibold uppercase tracking-wide text-muted">Etapas</p>
+  <ul class="space-y-1">
+    {lista.map((e) => {
+      const href = `/etapas/${e.id}/`;
+      return (
+        <li>
+          <a href={href} aria-current={ativo(href) ? "page" : undefined}
+             class:list={[link, ativo(href) && "bg-raised text-accent"]}>
+            <span class="text-muted">{e.ordem}.</span> {e.titulo}
+          </a>
+        </li>
+      );
+    })}
+  </ul>
+</nav>

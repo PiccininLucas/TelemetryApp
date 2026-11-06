@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from lmu_telemetry.core.models import Lap, LapFlag, SessionInfo
-from lmu_telemetry.storage import catalog, paths
+from lmu_telemetry.domain.models import Lap, LapFlag, SessionInfo
+from lmu_telemetry.infrastructure.storage import catalog, paths
 
 
 @pytest.fixture(autouse=True)
@@ -245,6 +245,41 @@ def test_corner_names_survive_reimporting_every_session(con):
     assert names == {1: "Variante del Rettifilo", 4: "Lesmo 1"}
 
 
+def test_a_different_corner_numbering_does_not_overwrite_another_name(con):
+    """Index 2 means a different corner on a lap where the detector found one
+    corner more or fewer. Naming it must not take over the row - and the
+    anchor - of the corner that already carries that index."""
+    track_id = catalog.upsert_track(con, "Autodromo Nazionale Monza")
+    catalog.set_corner_name(con, track_id, 2, "Lesmo 1", 2400.0)
+
+    catalog.set_corner_name(con, track_id, 2, "Ascari", 4300.0)
+
+    refs = {r.name: r.reference_distance_m
+            for r in catalog.corner_references(con, "Autodromo Nazionale Monza")}
+    assert refs == {"Lesmo 1": 2400.0, "Ascari": 4300.0}
+
+
+def test_renaming_from_a_lap_where_the_apex_moved_updates_the_same_corner(con):
+    track_id = catalog.upsert_track(con, "Autodromo Nazionale Monza")
+    catalog.set_corner_name(con, track_id, 1, "Turn 1", 900.0)
+
+    catalog.set_corner_name(con, track_id, 5, "Primeira", 912.0)
+
+    refs = catalog.corner_references(con, "Autodromo Nazionale Monza")
+    assert [(r.name, r.reference_distance_m) for r in refs] == [("Primeira", 912.0)]
+
+
+def test_renaming_picks_the_nearest_of_two_close_corners(con):
+    track_id = catalog.upsert_track(con, "Suzuka")
+    catalog.set_corner_name(con, track_id, 1, "S1", 1000.0)
+    catalog.set_corner_name(con, track_id, 2, "S2", 1060.0)
+
+    catalog.set_corner_name(con, track_id, 9, "S2 renamed", 1055.0)
+
+    names = {r.name for r in catalog.corner_references(con, "Suzuka")}
+    assert names == {"S1", "S2 renamed"}
+
+
 def test_renaming_a_corner_keeps_its_reference_distance(con):
     track_id = catalog.upsert_track(con, "Fuji Speedway")
     catalog.set_corner_name(con, track_id, 1, "Turn 1", 900.0)
@@ -274,6 +309,32 @@ def test_initialise_is_safe_to_run_twice():
     with catalog.connect() as con:
         catalog.initialise(con)
         assert con.execute("SELECT count(*) FROM schema_info").fetchone()[0] == 1
+
+
+def test_an_older_catalog_is_migrated_step_by_step(monkeypatch):
+    applied = []
+    monkeypatch.setattr(catalog, "SCHEMA_VERSION", 3)
+    monkeypatch.setitem(catalog.MIGRATIONS, 1, lambda con: applied.append(1))
+    monkeypatch.setitem(catalog.MIGRATIONS, 2, lambda con: applied.append(2))
+
+    with catalog.connect() as con:
+        con.execute("UPDATE schema_info SET version = 1")
+        catalog.initialise(con)
+        version = con.execute("SELECT version FROM schema_info").fetchone()[0]
+
+    assert applied == [1, 2]
+    assert version == 3
+
+
+def test_a_missing_migration_leaves_the_catalog_untouched(monkeypatch):
+    monkeypatch.setattr(catalog, "SCHEMA_VERSION", 2)
+
+    with catalog.connect() as con:
+        con.execute("UPDATE schema_info SET version = 1")
+        catalog.initialise(con)
+        version = con.execute("SELECT version FROM schema_info").fetchone()[0]
+
+    assert version == 1
 
 
 def test_list_sessions_filters_by_track(con):

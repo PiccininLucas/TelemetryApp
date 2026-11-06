@@ -1,0 +1,108 @@
+---
+import BaseLayout from "../presentation/layouts/BaseLayout.astro";
+import { documentacao } from "../composition";
+
+const { arquivos, paineis } = documentacao.obterDiagnostico();
+---
+<BaseLayout titulo="Diagnóstico do front atual" descricao="Como a interface PySide6 está organizada hoje: arquivos, layout, sinais e estilo.">
+  <h1 class="text-2xl font-semibold">Diagnóstico do front atual</h1>
+  <p class="mt-3 max-w-3xl leading-7 text-muted">
+    Estado da interface antes da remodelagem. Base para decidir o que muda e o que fica.
+  </p>
+
+  <section aria-labelledby="stack" class="mt-8">
+    <h2 id="stack" class="text-lg font-semibold">Stack</h2>
+    <ul class="mt-3 list-disc space-y-1 pl-6 leading-7">
+      <li>PySide6 6.11.1 para widgets; pyqtgraph 0.14.0 para todos os gráficos na tela.</li>
+      <li>matplotlib e reportlab apenas na exportação (PNG e PDF).</li>
+      <li>Tema escuro único (Fusion + QPalette + um QSS global). Sem tema claro nem alternador.</li>
+      <li>Interface em português; código e documentação técnica em inglês.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="layout" class="mt-8">
+    <h2 id="layout" class="text-lg font-semibold">Layout da janela (1360×880)</h2>
+    <pre class="mt-3 overflow-x-auto rounded-lg border border-line bg-surface p-4 font-mono text-sm leading-6" aria-label="Diagrama do layout atual da janela principal">{`┌──────────────────────────────────────────────────────────┐
+│ [aviso âmbar — oculto por padrão]                        │
+├────────────┬─────────────────────────────┬───────────────┤
+│ Navegador  │ ChartStack (600)            │ TrackMap      │
+│ de sessões │  velocidade / pedais /      │ (460)         │
+│ (380)      │  direção / marcha / RPM /   ├───────────────┤
+│            │  delta                      │ g-g           │
+│            ├─────────────────────────────┤ (420)         │
+│            │ Abas: Curvas | Consistência │               │
+│            │ (300)                       │               │
+├────────────┴─────────────────────────────┴───────────────┤
+│ barra de status                                          │
+└──────────────────────────────────────────────────────────┘`}</pre>
+    <p class="mt-3 max-w-3xl leading-7">
+      Três colunas fixas em <code>QSplitter</code> (380 / 800 / 420), uma <code>QTabWidget</code> interna.
+      Não há docks, barras de ferramentas nem painéis flutuantes. Os únicos controles de visibilidade
+      são o menu Painéis (mapa e g-g) e os alternadores de linhas de canal.
+    </p>
+  </section>
+
+  <section aria-labelledby="sinais" class="mt-8">
+    <h2 id="sinais" class="text-lg font-semibold">Painéis, dados e sinais</h2>
+    <div class="mt-3 overflow-x-auto">
+      <table class="w-full border-collapse text-sm">
+        <caption class="sr-only">Painéis da interface, dados que consomem e sinais que emitem</caption>
+        <thead>
+          <tr class="bg-raised text-left text-muted">
+            <th scope="col" class="border border-line px-3 py-2">Painel</th>
+            <th scope="col" class="border border-line px-3 py-2">Consome</th>
+            <th scope="col" class="border border-line px-3 py-2">Sinais</th>
+          </tr>
+        </thead>
+        <tbody>
+          {paineis.map((p) => (
+            <tr>
+              <th scope="row" class="border border-line px-3 py-2 text-left font-medium">{p.nome}</th>
+              <td class="border border-line px-3 py-2">{p.consome}</td>
+              <td class="border border-line px-3 py-2 font-mono text-xs">{p.sinais}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-3 max-w-3xl leading-7">
+      A ideia central é o <strong>cursor compartilhado</strong>: gráfico, mapa, tabela de curvas e consistência
+      emitem uma distância em metros que <code>MainWindow._on_cursor_moved</code> propaga para todos os painéis.
+    </p>
+  </section>
+
+  <section aria-labelledby="arquivos" class="mt-8">
+    <h2 id="arquivos" class="text-lg font-semibold">Arquivos da interface (~4.400 linhas)</h2>
+    <div class="mt-3 overflow-x-auto">
+      <table class="w-full border-collapse text-sm">
+        <caption class="sr-only">Arquivos do módulo de interface, tamanho e responsabilidade</caption>
+        <thead>
+          <tr class="bg-raised text-left text-muted">
+            <th scope="col" class="border border-line px-3 py-2">Arquivo</th>
+            <th scope="col" class="border border-line px-3 py-2 text-right">Linhas</th>
+            <th scope="col" class="border border-line px-3 py-2">Responsabilidade</th>
+          </tr>
+        </thead>
+        <tbody>
+          {arquivos.map((a) => (
+            <tr>
+              <th scope="row" class="border border-line px-3 py-2 text-left font-mono text-xs font-normal">{a.nome}</th>
+              <td class="border border-line px-3 py-2 text-right tabular-nums">{a.linhas.toLocaleString("pt-BR")}</td>
+              <td class="border border-line px-3 py-2">{a.responsabilidade}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="pontos" class="mt-8">
+    <h2 id="pontos" class="text-lg font-semibold">Pontos de atenção para a remodelagem</h2>
+    <ul class="mt-3 list-disc space-y-1 pl-6 leading-7">
+      <li><code>main_window.py</code> concentra 1263 linhas: layout, menus, estado e exportação no mesmo arquivo.</li>
+      <li>Estilo quase todo em <code>theme.py</code>; fugas pontuais em <code>session_browser.py</code>, <code>chart_panel.py</code> (spans HTML) e <code>corner_table.py</code>.</li>
+      <li>Nenhum teste visual: <code>tests/test_ui.py</code> (70 testes, offscreen) cobre comportamento, não aparência.</li>
+      <li>Fonte não definida no QSS (apenas <code>font-size: 13px</code>).</li>
+    </ul>
+  </section>
+</BaseLayout>

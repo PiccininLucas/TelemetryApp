@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.analysis import friction
+from lmu_telemetry.domain.analysis import friction
 
 
 def circle(radius: float, n: int = 200) -> tuple[np.ndarray, np.ndarray]:
@@ -218,3 +218,13 @@ def test_combined_magnitude_is_the_vector_sum():
 
     assert friction.combined_magnitude(lateral, longitudinal).tolist() == \
         pytest.approx([5.0, 2.0, 1.0])
+
+
+def test_the_blend_ratio_is_a_parameter_not_a_constant():
+    """The smaller axis at a quarter of the larger is blended only when the
+    ratio allows it."""
+    lateral = np.full(100, 1.0)
+    longitudinal = np.full(100, 0.25)
+
+    assert friction.transition_quality(lateral, longitudinal, 0.3, 1.0 / 3.0) == 0.0
+    assert friction.transition_quality(lateral, longitudinal, 0.3, 0.2) == 1.0

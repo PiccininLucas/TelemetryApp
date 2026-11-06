@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.analysis import consistency
-from lmu_telemetry.core.models import Corner
+from lmu_telemetry.domain.analysis import consistency
+from lmu_telemetry.domain.models import Corner
 
 
 def make_corner(index: int, apex: float, *, braking=None, speed=30.0,
@@ -413,3 +413,11 @@ def test_per_lap_arrays_line_up_with_the_lap_indices():
     assert corner.braking_point_std_m == pytest.approx(
         np.std([380.0, 390.0], ddof=1)
     )
+
+
+def test_the_drift_threshold_is_a_parameter_not_a_constant():
+    """Steady but not perfectly monotonic: a drift at 0.7, not at 0.99."""
+    series = (480.0, 486.0, 484.0, 497.0, 503.0, 501.0)
+
+    assert consistency._has_trend(series, 0.7) is True
+    assert consistency._has_trend(series, 0.99) is False

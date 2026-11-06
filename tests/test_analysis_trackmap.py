@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.analysis import trackmap
+from lmu_telemetry.domain.analysis import trackmap
 
 
 # --------------------------------------------------------------------------- #

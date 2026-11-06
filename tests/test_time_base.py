@@ -5,10 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.core.config import Config, load_config
-from lmu_telemetry.ingest import channel_registry, duckdb_reader, time_base
-from lmu_telemetry.ingest.time_base import TimeBase, TimeBaseSource
-from lmu_telemetry.ui import strings
+from lmu_telemetry.domain import resampling
+from lmu_telemetry.shared.config import Config, load_config
+from lmu_telemetry.infrastructure.ingest import channel_registry, duckdb_reader, time_base
+from lmu_telemetry.infrastructure.ingest.time_base import TimeBase, TimeBaseSource
+from lmu_telemetry.shared import strings
 
 
 def make_base(t0=0.0, span=10.0, source=TimeBaseSource.UNIFORM, reference=None):
@@ -212,7 +213,7 @@ def test_continuous_channel_is_interpolated_linearly():
     values = np.array([0.0, 10.0, 20.0])
     grid = np.array([0.0, 0.5, 1.5, 2.0])
 
-    result = time_base.resample_to_grid(values, source_times, grid, discrete=False)
+    result = resampling.resample_to_grid(values, source_times, grid, discrete=False)
     assert result.tolist() == pytest.approx([0.0, 5.0, 15.0, 20.0])
 
 
@@ -222,7 +223,7 @@ def test_discrete_channel_is_forward_filled_not_interpolated():
     gears = np.array([3.0, 4.0, 5.0])
     grid = np.array([0.5, 0.99, 1.0, 1.5])
 
-    result = time_base.resample_to_grid(gears, source_times, grid, discrete=True)
+    result = resampling.resample_to_grid(gears, source_times, grid, discrete=True)
     assert result.tolist() == [3.0, 3.0, 4.0, 4.0]
     assert not np.any((result > 3.0) & (result < 4.0))
 
@@ -230,7 +231,7 @@ def test_discrete_channel_is_forward_filled_not_interpolated():
 def test_step_interpolation_before_the_first_sample_is_nan():
     """The recording says nothing about times before it started, and inventing
     history is worse than admitting the gap."""
-    result = time_base.step_interpolate(
+    result = resampling.step_interpolate(
         np.array([1.0, 2.0]), np.array([10.0, 11.0]), np.array([9.0, 10.0, 11.5])
     )
     assert np.isnan(result[0])
@@ -243,7 +244,7 @@ def test_per_wheel_channel_resamples_column_by_column():
     values = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]])
     grid = np.array([0.0, 0.5, 1.0])
 
-    result = time_base.resample_to_grid(values, source_times, grid, discrete=False)
+    result = resampling.resample_to_grid(values, source_times, grid, discrete=False)
     assert result.shape == (3, 4)
     assert result[1].tolist() == pytest.approx([3.0, 4.0, 5.0, 6.0])
 
@@ -251,7 +252,7 @@ def test_per_wheel_channel_resamples_column_by_column():
 def test_interpolation_clamps_rather_than_extrapolating():
     """Beyond the recorded range, repeating the edge sample beats inventing
     values that were never measured."""
-    result = time_base.resample_to_grid(
+    result = resampling.resample_to_grid(
         np.array([5.0, 6.0]), np.array([1.0, 2.0]),
         np.array([0.0, 3.0]), discrete=False,
     )

@@ -15,15 +15,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lmu_telemetry import pipeline  # noqa: E402
-from lmu_telemetry.core.errors import SessionNameError, TelemetryError  # noqa: E402
-from lmu_telemetry.core.models import parse_session_filename  # noqa: E402
-from lmu_telemetry.export import charts, report, tables  # noqa: E402
-from lmu_telemetry.ingest.session_loader import load_session  # noqa: E402
-from lmu_telemetry.logging_config import setup_logging  # noqa: E402
-from lmu_telemetry.storage import catalog  # noqa: E402
-from lmu_telemetry.ui import strings  # noqa: E402
-from lmu_telemetry.ui.formatting import format_gap, format_lap_time  # noqa: E402
+from lmu_telemetry.application import pipeline  # noqa: E402
+from lmu_telemetry.shared.errors import SessionNameError, TelemetryError  # noqa: E402
+from lmu_telemetry.domain.models import parse_session_filename  # noqa: E402
+from lmu_telemetry.infrastructure.export import charts, report, tables  # noqa: E402
+from lmu_telemetry.infrastructure.ingest.session_loader import load_session  # noqa: E402
+from lmu_telemetry.shared.logging_config import setup_logging  # noqa: E402
+from lmu_telemetry.infrastructure.storage import catalog  # noqa: E402
+from lmu_telemetry.shared import strings  # noqa: E402
+from lmu_telemetry.shared.formatting import format_gap, format_lap_time  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

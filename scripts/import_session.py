@@ -19,10 +19,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lmu_telemetry.core.errors import TelemetryError  # noqa: E402
-from lmu_telemetry.logging_config import get_logger, setup_logging  # noqa: E402
-from lmu_telemetry.storage import cache, catalog, importer, paths  # noqa: E402
-from lmu_telemetry.ui import strings  # noqa: E402
+from lmu_telemetry.shared.errors import TelemetryError  # noqa: E402
+from lmu_telemetry.shared.logging_config import get_logger, setup_logging  # noqa: E402
+from lmu_telemetry.infrastructure.storage import cache, catalog, importer, paths  # noqa: E402
+from lmu_telemetry.shared import strings  # noqa: E402
 
 logger = get_logger(__name__)
 LINE_WIDTH = 92

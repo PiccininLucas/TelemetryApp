@@ -6,9 +6,9 @@ import math
 
 import pytest
 
-from lmu_telemetry.core.errors import ChannelNotFoundError
-from lmu_telemetry.ingest import channel_registry, duckdb_reader
-from lmu_telemetry.ingest.channel_registry import ChannelFormat, ChannelInfo
+from lmu_telemetry.shared.errors import ChannelNotFoundError
+from lmu_telemetry.infrastructure.ingest import channel_registry, duckdb_reader
+from lmu_telemetry.infrastructure.ingest.channel_registry import ChannelFormat, ChannelInfo
 
 
 # --------------------------------------------------------------------------- #

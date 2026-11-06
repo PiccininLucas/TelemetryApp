@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+/* Tokens de cor espelham lmu_telemetry/ui/theme.py (tema escuro do app),
+   para a documentação e o app conversarem. */
+@theme {
+  --color-bg: #1a1c20;
+  --color-surface: #22252b;
+  --color-raised: #2b2f36;
+  --color-line: #3a3f47;
+  --color-fg: #e6e8ea;
+  --color-muted: #9aa0a8;
+  --color-accent: #4da3ff;
+  --color-warn: #f0b132;
+  --color-danger: #e5484d;
+  --color-ok: #30c48d;
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+html { color-scheme: dark; }
+body { background: var(--color-bg); color: var(--color-fg); font-family: var(--font-sans); }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+/* Estilo do conteúdo Markdown */
+.prose-doc h2 { margin: 2rem 0 .75rem; font-size: 1.25rem; font-weight: 600; }
+.prose-doc h3 { margin: 1.5rem 0 .5rem; font-size: 1.05rem; font-weight: 600; }
+.prose-doc p, .prose-doc ul, .prose-doc ol { margin: .75rem 0; line-height: 1.7; }
+.prose-doc ul { list-style: disc; padding-left: 1.5rem; }
+.prose-doc ol { list-style: decimal; padding-left: 1.5rem; }
+.prose-doc li { margin: .25rem 0; }
+.prose-doc a { color: var(--color-accent); text-decoration: underline; }
+.prose-doc code { font-family: var(--font-mono); font-size: .875em; background: var(--color-raised); padding: .1rem .35rem; border-radius: .25rem; }
+.prose-doc pre { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: .5rem; padding: 1rem; overflow-x: auto; margin: 1rem 0; }
+.prose-doc pre code { background: none; padding: 0; }
+.prose-doc table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+.prose-doc th, .prose-doc td { border: 1px solid var(--color-line); padding: .5rem .75rem; text-align: left; }
+.prose-doc th { background: var(--color-raised); color: var(--color-muted); }
+.prose-doc blockquote { border-left: 3px solid var(--color-accent); padding-left: 1rem; color: var(--color-muted); margin: 1rem 0; }

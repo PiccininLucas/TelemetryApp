@@ -19,13 +19,13 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lmu_telemetry.core.errors import TelemetryError  # noqa: E402
-from lmu_telemetry.core.models import LapFlag  # noqa: E402
-from lmu_telemetry.ingest.session_loader import (  # noqa: E402
+from lmu_telemetry.shared.errors import TelemetryError  # noqa: E402
+from lmu_telemetry.domain.models import LapFlag  # noqa: E402
+from lmu_telemetry.infrastructure.ingest.session_loader import (  # noqa: E402
     Session, describe_time_base, load_session,
 )
-from lmu_telemetry.logging_config import get_logger, setup_logging  # noqa: E402
-from lmu_telemetry.ui import strings  # noqa: E402
+from lmu_telemetry.shared.logging_config import get_logger, setup_logging  # noqa: E402
+from lmu_telemetry.shared import strings  # noqa: E402
 
 logger = get_logger(__name__)
 

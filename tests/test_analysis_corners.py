@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.analysis import corners
-from lmu_telemetry.analysis.corners import CornerDetectionSettings
-from lmu_telemetry.core.models import Corner
+from lmu_telemetry.domain.analysis import corners
+from lmu_telemetry.domain.analysis.corners import CornerDetectionSettings
+from lmu_telemetry.domain.models import Corner
 
 
 def detect(lap, **overrides):
@@ -181,6 +181,41 @@ def test_a_single_noisy_sample_is_not_a_braking_point():
     assert found[0].braking_distance_m >= 240.0
 
 
+def test_a_brake_tap_on_the_straight_is_not_the_braking_point():
+    """The corner's window reaches back midway to the previous corner, so a
+    sustained brake application far before the real braking zone is inside it.
+    The braking point is where the phase leading into the apex begins."""
+    grid = np.arange(0.0, 600.0)
+    speed = np.full_like(grid, 60.0)
+    speed[280:320] = 30.0
+    brake = np.zeros_like(grid)
+    brake[100:140] = 0.5  # a sustained tap, 140 m before the real zone
+    brake[240:280] = 0.8  # the braking zone
+
+    found = corners.detect_corners(
+        speed, grid, brake, np.zeros_like(grid),
+        CornerDetectionSettings(brake_min_duration_s=0.1),
+    )
+
+    assert len(found) == 1
+    assert found[0].braking_distance_m == pytest.approx(240.0)
+
+
+def test_braking_point_is_the_start_of_the_run_not_a_point_inside_it():
+    grid = np.arange(0.0, 600.0)
+    speed = np.full_like(grid, 60.0)
+    speed[280:320] = 30.0
+    brake = np.zeros_like(grid)
+    brake[200:285] = 0.8  # long run, still on the brakes just past the apex
+
+    found = corners.detect_corners(
+        speed, grid, brake, np.zeros_like(grid),
+        CornerDetectionSettings(brake_min_duration_s=0.1),
+    )
+
+    assert found[0].braking_distance_m == pytest.approx(200.0)
+
+
 def test_a_corner_taken_without_braking_reports_no_braking_point():
     grid = np.arange(0.0, 600.0)
     speed = np.full_like(grid, 60.0)
@@ -271,11 +306,8 @@ def test_matching_handles_empty_input():
 
 def test_labels_fall_back_to_a_number():
     assert make_corner(0, 100.0).label == "C1"
-    assert corners.apply_names([make_corner(0, 100.0)], {0: "Parabolica"})[0].label \
-        == "Parabolica"
-
-
-def test_apply_names_leaves_unnamed_corners_alone():
-    result = corners.apply_names([make_corner(0, 1.0), make_corner(1, 2.0)], {1: "Lesmo"})
-    assert result[0].label == "C1"
-    assert result[1].label == "Lesmo"
+    named = corners.apply_names_by_distance(
+        [make_corner(0, 100.0), make_corner(1, 900.0)], [(902.0, "Lesmo")]
+    )
+    assert named[0].label == "C1"
+    assert named[1].label == "Lesmo"
