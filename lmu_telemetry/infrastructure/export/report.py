@@ -16,12 +16,9 @@ itself rather than assumed to be remembered.
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-import numpy as np
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
@@ -31,13 +28,7 @@ from reportlab.platypus import (
     Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
-if TYPE_CHECKING:
-    from lmu_telemetry.application import pipeline
-    from lmu_telemetry.domain.analysis.consistency import ConsistencyReport
-    from lmu_telemetry.domain.analysis.delta import DeltaResult
-    from lmu_telemetry.domain.analysis.friction import FrictionEnvelope
-    from lmu_telemetry.domain.analysis.ideal_lap import IdealLap
-
+from lmu_telemetry.application.reporting import ReportContext
 from lmu_telemetry.infrastructure.export import charts
 from lmu_telemetry.shared.logging_config import get_logger
 from lmu_telemetry.shared import strings
@@ -49,60 +40,6 @@ HEADING = colors.HexColor("#1f5fa8")
 RULE = colors.HexColor("#c8ccd2")
 MUTED = colors.HexColor("#5f656d")
 HIGHLIGHT = colors.HexColor("#b8791a")
-
-
-@dataclass(frozen=True, slots=True)
-class ReportContext:
-    """Everything a report needs, gathered by the caller.
-
-    Assembled by whoever has access to the session - the interface or a script -
-    so this module stays a renderer and never opens a file of its own.
-
-    Attributes:
-        track_name: Circuit.
-        car_name: Car.
-        session_label: "Corrida", "Treino livre" and so on.
-        session_date: When it was recorded.
-        lap_number: The lap being reported.
-        primary: Its `pipeline.LapAnalysis`.
-        primary_label: How to name it in the legend.
-        benchmark: The comparison lap's analysis, if any.
-        benchmark_label: How to name it in the chart legend, where the gap is
-            useful because nothing else on the image states it.
-        benchmark_summary: How to name it in the prose line, which supplies the
-            gap itself. Separate from the legend label so the sentence does not
-            come out as "Referência: referência: volta 4 … · diferença …".
-        delta: The delta between them.
-        corner_rows: `pipeline.CornerRow` objects.
-        ideal: The session's `IdealLap`, if built.
-        consistency: The stint's `ConsistencyReport`, if measurable.
-        envelope: The lap's `FrictionEnvelope`, if available.
-        transition_quality: Fraction of working time with both axes loaded.
-        track_path: `(x_m, y_m)` of the circuit, if GPS was recorded.
-        map_classes: Per-metre integer classes colouring the map - pedal state
-            when there is no comparison, gain and loss when there is.
-        map_colours: The palette those classes index, from `export.charts`.
-    """
-
-    track_name: str
-    car_name: str
-    session_label: str
-    session_date: datetime | None
-    lap_number: int
-    primary: pipeline.LapAnalysis
-    primary_label: str
-    benchmark: pipeline.LapAnalysis | None = None
-    benchmark_label: str = ""
-    benchmark_summary: str = ""
-    delta: DeltaResult | None = None
-    corner_rows: list[pipeline.CornerRow] | None = None
-    ideal: IdealLap | None = None
-    consistency: ConsistencyReport | None = None
-    envelope: FrictionEnvelope | None = None
-    transition_quality: float = 0.0
-    track_path: tuple[np.ndarray, np.ndarray] | None = None
-    map_classes: np.ndarray | None = None
-    map_colours: dict[int, str] | None = None
 
 
 def write_report(path: Path | str, context: ReportContext) -> Path:
@@ -196,6 +133,11 @@ def _summary(context: ReportContext, styles: dict) -> list:
     return story
 
 
+def _map_palette(scheme: str | None) -> dict[int, str] | None:
+    """The print palette a map scheme names."""
+    return {"loss": charts.LOSS_COLOURS, "pedal": charts.PEDAL_COLOURS}.get(scheme or "")
+
+
 def _charts(context: ReportContext, styles: dict, scratch: Path) -> list:
     story = [Paragraph(strings.PDF_SECTION_CHARTS, styles["heading"])]
 
@@ -213,7 +155,7 @@ def _charts(context: ReportContext, styles: dict, scratch: Path) -> list:
         x_m, y_m = context.track_path
         map_path = charts.export_track_map(
             scratch / "map.png", x_m, y_m,
-            classes=context.map_classes, colours=context.map_colours,
+            classes=context.map_classes, colours=_map_palette(context.map_scheme),
         )
         side.append(Image(str(map_path), width=80 * mm, height=80 * mm))
 

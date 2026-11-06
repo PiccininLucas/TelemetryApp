@@ -31,10 +31,11 @@ from lmu_telemetry.domain.analysis.delta import DeltaResult
 from lmu_telemetry.domain.analysis.ideal_lap import IdealLap
 from lmu_telemetry.shared.errors import SessionNameError, TelemetryError
 from lmu_telemetry.domain.models import Lap, LapFlag, parse_session_filename
-from lmu_telemetry.infrastructure.export import charts, report, tables
-from lmu_telemetry.infrastructure.ingest.session_loader import Session, load_session
 from lmu_telemetry.shared.logging_config import get_logger
-from lmu_telemetry.infrastructure.storage import catalog, importer
+from lmu_telemetry.application.ports import (
+    CatalogGateway, Gateways, OpenedSession, SessionImporter, SessionLoader,
+)
+from lmu_telemetry.application.reporting import ReportContext
 from lmu_telemetry.shared import strings
 from lmu_telemetry.presentation.chart_panel import (
     ROW_SPECS, AxisMode, ChartStack, LapTrace,
@@ -67,9 +68,10 @@ class ImportWorker(QtCore.QObject):
     #: `(imported, failures)` when the run ends, however it ends.
     finished = QtCore.Signal(int, list)
 
-    def __init__(self, paths: list[Path]) -> None:
+    def __init__(self, paths: list[Path], importer: SessionImporter) -> None:
         super().__init__()
         self._paths = paths
+        self._importer = importer
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -81,12 +83,12 @@ class ImportWorker(QtCore.QObject):
     def run(self) -> None:
         imported, failures = 0, []
         try:
-            with catalog.connect() as con:
+            with self._importer.open() as batch:
                 for done, path in enumerate(self._paths, start=1):
                     if self._cancelled:
                         break
                     try:
-                        importer.import_session_file(path, con=con)
+                        batch.import_file(path)
                         imported += 1
                     except TelemetryError as exc:
                         logger.error("Import failed for %s: %s", path.name, exc)
@@ -152,11 +154,16 @@ class OpenSession:
     """
 
     def __init__(
-        self, session_id: str, session: Session, track_length_m: float | None
+        self,
+        session_id: str,
+        session: OpenedSession,
+        track_length_m: float | None,
+        name_match_tolerance_m: float,
     ) -> None:
         self.session_id = session_id
         self.session = session
         self.track_length_m = track_length_m
+        self._name_match_tolerance_m = name_match_tolerance_m
         self._laps: dict[int, pipeline.LapAnalysis | None] = {}
         self._session_analysis: pipeline.SessionAnalysis | None = None
         #: `(distance_m, name)` for every corner the user has named at this
@@ -181,7 +188,7 @@ class OpenSession:
         # the same rule the catalog applies - not one at exactly this distance:
         # the apex of the same corner sits a metre or two elsewhere on another
         # lap, and an exact match would leave two names competing for it.
-        tolerance = catalog.name_match_tolerance_m()
+        tolerance = self._name_match_tolerance_m
         nearest = min(
             (ref for ref in self.corner_references
              if abs(ref[0] - distance_m) <= tolerance),
@@ -245,7 +252,11 @@ class SessionPool:
     open. Beyond that, holding files open only leaks handles.
     """
 
-    def __init__(self, capacity: int = 2) -> None:
+    def __init__(
+        self, loader: SessionLoader, catalog: CatalogGateway, capacity: int = 2
+    ) -> None:
+        self._loader = loader
+        self._catalog = catalog
         self._capacity = capacity
         self._open: dict[str, OpenSession] = {}
         #: Session ids, least recently used first.
@@ -262,16 +273,17 @@ class SessionPool:
             self._touch(session_id)
             return self._open[session_id]
 
-        with catalog.connect() as con:
-            track_length = catalog.track_length(con, selection.track_name)
-            references = [
-                (reference.reference_distance_m, reference.name)
-                for reference in catalog.corner_references(con, selection.track_name)
-                if reference.reference_distance_m is not None and reference.name
-            ]
-        session = load_session(selection.source_path, with_hash=False)
+        track_length = self._catalog.track_length(selection.track_name)
+        references = [
+            (reference.reference_distance_m, reference.name)
+            for reference in self._catalog.corner_references(selection.track_name)
+            if reference.reference_distance_m is not None and reference.name
+        ]
+        session = self._loader.load(selection.source_path)
 
-        self._open[session_id] = OpenSession(session_id, session, track_length)
+        self._open[session_id] = OpenSession(
+            session_id, session, track_length, self._catalog.name_match_tolerance_m()
+        )
         self._open[session_id].corner_references = references
         self._touch(session_id)
         self._evict()
@@ -303,9 +315,10 @@ class SessionPool:
 class MainWindow(QtWidgets.QMainWindow):
     """The application window."""
 
-    def __init__(self) -> None:
+    def __init__(self, gateways: Gateways) -> None:
         super().__init__()
-        self._sessions = SessionPool()
+        self._gateways = gateways
+        self._sessions = SessionPool(gateways.sessions, gateways.catalog)
         self._selection: LapSelection | None = None
         self._current: CurrentView | None = None
         self._pinned: LapSelection | None = None
@@ -336,7 +349,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
 
-        self.browser = SessionBrowser()
+        self.browser = SessionBrowser(self._gateways.catalog)
         self.browser.lap_selected.connect(self.show_lap)
         self.splitter.addWidget(self.browser)
 
@@ -574,7 +587,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._import_actions_enabled(False)
 
         thread = QtCore.QThread(self)
-        worker = ImportWorker(paths)
+        worker = ImportWorker(paths, self._gateways.importer)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._on_import_progress)
@@ -849,11 +862,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         if self._selection is None:
             return
-        with catalog.connect() as con:
-            catalog.set_corner_name(
-                con, catalog.track_id_for(self._selection.track_name),
-                corner_index, name, distance_m,
-            )
+        self._gateways.catalog.set_corner_name(
+            self._selection.track_name, corner_index, name, distance_m
+        )
         for opened in self._sessions.all():
             opened.rename_corner(distance_m, name)
         logger.info("Corner at %.0f m named %r", distance_m, name)
@@ -1040,9 +1051,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def export_png(self) -> None:
         """Redraw the traces at print quality and save them."""
-        def render(path: Path, _dialect) -> None:
+        def render(path: Path, _excel: bool) -> None:
             view = self._current
-            charts.export_lap_charts(
+            self._gateways.exporter.lap_charts(
                 path, view.primary, view.primary_label,
                 view.benchmark, view.benchmark_label, view.delta,
                 view.primary.corners,
@@ -1055,9 +1066,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def export_csv(self) -> None:
         """Every channel of the lap, one row per metre."""
-        def render(path: Path, dialect) -> None:
+        def render(path: Path, excel: bool) -> None:
             view = self._current
-            tables.write_lap(path, view.primary, view.delta, dialect)
+            self._gateways.exporter.lap_table(path, view.primary, view.delta, excel=excel)
 
         self._export(
             strings.DIALOG_EXPORT_CSV_TITLE, strings.DIALOG_CSV_FILTER,
@@ -1065,8 +1076,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def export_corners_csv(self) -> None:
-        def render(path: Path, dialect) -> None:
-            tables.write_corners(path, self._current.corner_rows, dialect)
+        def render(path: Path, excel: bool) -> None:
+            self._gateways.exporter.corner_table(path, self._current.corner_rows, excel=excel)
 
         self._export(
             strings.DIALOG_EXPORT_CORNERS_TITLE, strings.DIALOG_CSV_FILTER,
@@ -1075,8 +1086,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def export_pdf(self) -> None:
         """The whole debrief, with its caveats, in one document."""
-        def render(path: Path, _dialect) -> None:
-            report.write_report(path, self._report_context())
+        def render(path: Path, _excel: bool) -> None:
+            self._gateways.exporter.report(path, self._report_context())
 
         self._export(
             strings.DIALOG_EXPORT_PDF_TITLE, strings.DIALOG_PDF_FILTER,
@@ -1107,14 +1118,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if not path.suffix:
             path = path.with_suffix(suffix)
 
-        dialect = (tables.EXCEL_PT_BR
-                   if chosen == strings.DIALOG_CSV_FILTER_EXCEL
-                   else tables.STANDARD)
+        excel = chosen == strings.DIALOG_CSV_FILTER_EXCEL
 
         self.statusBar().showMessage(strings.STATUS_EXPORTING)
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:
-            render(path, dialect)
+            render(path, excel)
         except Exception as exc:  # noqa: BLE001 - a failed save is survivable
             logger.exception("Export to %s failed", path)
             self.statusBar().showMessage(
@@ -1140,7 +1149,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ).strip().replace(" ", "-")
         return f"{track}-volta{selection.lap_number}{suffix}"
 
-    def _report_context(self) -> report.ReportContext:
+    def _report_context(self) -> ReportContext:
         """Gather everything the PDF needs from what is currently drawn."""
         view = self._current
         selection = view.selection
@@ -1152,18 +1161,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # The map is coloured the same way it is on screen: by where time moved
         # when there is a comparison, by pedal state when there is not.
-        map_classes = map_colours = None
+        map_classes = map_scheme = None
         if track_path is not None:
             if view.delta is not None:
                 map_classes = pipeline.loss_classes_on(
                     view.primary.grid_m, view.delta
                 )
-                map_colours = charts.LOSS_COLOURS
+                map_scheme = "loss"
             else:
                 map_classes = pipeline.pedal_states(view.primary)
-                map_colours = charts.PEDAL_COLOURS
+                map_scheme = "pedal"
 
-        return report.ReportContext(
+        return ReportContext(
             track_name=selection.track_name,
             car_name=selection.car_name or "?",
             session_label=strings.session_type_label(
@@ -1184,7 +1193,7 @@ class MainWindow(QtWidgets.QMainWindow):
             transition_quality=pipeline.transition_quality(view.primary),
             track_path=track_path,
             map_classes=map_classes,
-            map_colours=map_colours,
+            map_scheme=map_scheme,
         )
 
     # -- lifecycle ---------------------------------------------------------

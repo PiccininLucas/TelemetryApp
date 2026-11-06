@@ -21,7 +21,7 @@ O layout atual é de três colunas fixas em `QSplitter` com uma `QTabWidget` int
 3. Adicionar barra de ferramentas com as ações mais usadas (modo de comparação, eixo X, exportar).
 4. Persistir geometria e visibilidade dos painéis entre execuções.
 5. Revisar a barra de status e o banner de aviso.
-6. Quitar a dívida de arquitetura: hoje `main_window.py` e `session_browser.py` importam `infrastructure` direto (catálogo, carga de sessão, exportação). Criar portas em `application/` e injetá-las a partir de `main.py`; a lista `PRESENTATION_INFRASTRUCTURE_DEBT` em `tests/test_architecture.py` deve esvaziar.
+6. ~~Quitar a dívida de arquitetura~~ **Feito.** `main_window.py` e `session_browser.py` não importam mais `infrastructure`: recebem `Gateways` (portas em `application/ports.py`) montados por `composition.py` a partir de `main.py`. A lista de dívida do `tests/test_architecture.py` foi removida.
 
 ## Critério de pronto
 

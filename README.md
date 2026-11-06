@@ -608,9 +608,9 @@ layer.** The analysis takes numpy arrays and returns numbers. That is what lets
 every formula be tested without the game installed, and what would let a live
 data source feed the same functions later without touching an equation. The
 rule is enforced mechanically by `tests/test_architecture.py`, which parses
-imports with `ast` rather than grepping. Two presentation modules still reach
-`infrastructure` directly; the test lists them as known debt that can only
-shrink.
+imports with `ast` rather than grepping. The interface reaches storage, ingestion
+and export through gateways (`application/ports.py`) that `composition.py` wires
+in from `main.py`.
 
 On-screen charts use `pyqtgraph` because a long session is hundreds of
 thousands of points per channel and zoom has to stay fluid; `matplotlib` is

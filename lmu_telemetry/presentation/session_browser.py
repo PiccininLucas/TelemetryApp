@@ -18,7 +18,8 @@ from datetime import datetime
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from lmu_telemetry.shared.logging_config import get_logger
-from lmu_telemetry.infrastructure.storage import catalog
+from lmu_telemetry.application.ports import CatalogGateway
+from lmu_telemetry.domain.records import LapRow, SessionRow
 from lmu_telemetry.shared import strings
 from lmu_telemetry.presentation import theme
 from lmu_telemetry.shared.formatting import format_lap_time
@@ -57,8 +58,11 @@ class SessionBrowser(QtWidgets.QWidget):
 
     lap_selected = QtCore.Signal(LapSelection)
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(
+        self, catalog: CatalogGateway, parent: QtWidgets.QWidget | None = None
+    ) -> None:
         super().__init__(parent)
+        self._catalog = catalog
         self._build()
 
     def _build(self) -> None:
@@ -118,12 +122,7 @@ class SessionBrowser(QtWidgets.QWidget):
         self.tree.clear()
 
         try:
-            with catalog.connect() as con:
-                sessions = catalog.list_sessions(con)
-                laps_by_session = {
-                    session.session_id: catalog.list_laps(con, session.session_id)
-                    for session in sessions
-                }
+            sessions, laps_by_session = self._catalog.list_sessions()
         except Exception as exc:  # noqa: BLE001 - an unreadable catalog is survivable
             logger.error("Could not read the catalog: %s", exc)
             sessions, laps_by_session = [], {}
@@ -164,8 +163,8 @@ class SessionBrowser(QtWidgets.QWidget):
     def _add_session(
         self,
         parent: QtWidgets.QTreeWidgetItem,
-        session: catalog.SessionRow,
-        laps: list[catalog.LapRow],
+        session: SessionRow,
+        laps: list[LapRow],
     ) -> QtWidgets.QTreeWidgetItem:
         label = strings.BROWSER_SESSION_LABEL.format(
             date=_format_date(session.started_at),
@@ -189,8 +188,8 @@ class SessionBrowser(QtWidgets.QWidget):
     def _add_lap(
         self,
         parent: QtWidgets.QTreeWidgetItem,
-        session: catalog.SessionRow,
-        lap: catalog.LapRow,
+        session: SessionRow,
+        lap: LapRow,
         *,
         is_best: bool,
     ) -> None:
@@ -286,14 +285,14 @@ class SessionBrowser(QtWidgets.QWidget):
         return True
 
 
-def _group_by_track(sessions: list[catalog.SessionRow]) -> dict[str, list]:
+def _group_by_track(sessions: list[SessionRow]) -> dict[str, list]:
     grouped: dict[str, list] = {}
     for session in sessions:
         grouped.setdefault(session.track_name, []).append(session)
     return dict(sorted(grouped.items()))
 
 
-def _group_by_car(sessions: list[catalog.SessionRow]) -> dict[str, list]:
+def _group_by_car(sessions: list[SessionRow]) -> dict[str, list]:
     grouped: dict[str, list] = {}
     for session in sessions:
         grouped.setdefault(session.car_name or "?", []).append(session)
