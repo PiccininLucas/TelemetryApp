@@ -1,6 +1,6 @@
-"""The main window: browser on the left, stacked traces in the centre.
+"""The main window: the stacked traces in the centre, everything else docked.
 
-Phase 6 turns the single speed plot into the comparison instrument: several
+Phase 6 turned the single speed plot into the comparison instrument: several
 channels stacked on one shared X axis, a second lap overlaid, and the delta-t
 between them.
 
@@ -10,31 +10,24 @@ are at different places on the circuit. So while a comparison is drawn the time
 axis is disabled, and a reference lap from another circuit is refused outright
 rather than plotted against a distance grid that means nothing.
 
-The right panel - track map, g-g diagram, corner table, consistency - arrives
-with the phases that compute what goes in it, and the splitter is already laid
-out to take it.
+The traces are the window's centre; the session browser, the corner tables, the
+track map and the g-g diagram are dock widgets. They can be hidden, moved,
+tabbed together or floated, and the arrangement is remembered between runs
+(`QSettings`). "Restaurar layout padrão" puts them back.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from lmu_telemetry.application import pipeline
-from lmu_telemetry.domain.analysis.consistency import ConsistencyReport
-from lmu_telemetry.domain.analysis.delta import DeltaResult
-from lmu_telemetry.domain.analysis.ideal_lap import IdealLap
 from lmu_telemetry.shared.errors import SessionNameError, TelemetryError
-from lmu_telemetry.domain.models import Lap, LapFlag, parse_session_filename
+from lmu_telemetry.domain.models import parse_session_filename
 from lmu_telemetry.shared.logging_config import get_logger
-from lmu_telemetry.application.ports import (
-    CatalogGateway, Gateways, OpenedSession, SessionImporter, SessionLoader,
-)
+from lmu_telemetry.application.ports import Gateways
 from lmu_telemetry.application.reporting import ReportContext
 from lmu_telemetry.shared import strings
 from lmu_telemetry.presentation.chart_panel import (
@@ -44,280 +37,33 @@ from lmu_telemetry.presentation.consistency_panel import ConsistencyPanel
 from lmu_telemetry.presentation.corner_table import CornerTable
 from lmu_telemetry.shared.formatting import format_gap, format_lap_time
 from lmu_telemetry.presentation.gg_panel import FrictionPanel
+from lmu_telemetry.presentation.import_worker import ImportWorker
 from lmu_telemetry.presentation.session_browser import LapSelection, SessionBrowser
+from lmu_telemetry.presentation.session_state import (
+    ComparisonMode, CurrentView, OpenSession, SessionPool,
+)
 from lmu_telemetry.presentation.track_map import MapColour, TrackMap
 
 logger = get_logger(__name__)
 
-
-class ImportWorker(QtCore.QObject):
-    """Imports session files off the interface thread.
-
-    Importing a folder hashes and opens every file, which takes seconds per
-    dozen sessions. Done on the interface thread it freezes the window, and the
-    wait cursor is the only sign it is not hung.
-
-    The worker opens its own catalog connection: a DuckDB connection is not to
-    be shared between threads, and nothing else touches the catalog while an
-    import runs - the interface refuses to start a second one and reloads the
-    browser only once this one is done.
-    """
-
-    #: `(done, total, file name)` after each file.
-    progress = QtCore.Signal(int, int, str)
-    #: `(imported, failures)` when the run ends, however it ends.
-    finished = QtCore.Signal(int, list)
-
-    def __init__(self, paths: list[Path], importer: SessionImporter) -> None:
-        super().__init__()
-        self._paths = paths
-        self._importer = importer
-        self._cancelled = False
-
-    def cancel(self) -> None:
-        """Stop after the file being imported. A plain flag: it is only ever
-        set to True, so no lock is needed."""
-        self._cancelled = True
-
-    @QtCore.Slot()
-    def run(self) -> None:
-        imported, failures = 0, []
-        try:
-            with self._importer.open() as batch:
-                for done, path in enumerate(self._paths, start=1):
-                    if self._cancelled:
-                        break
-                    try:
-                        batch.import_file(path)
-                        imported += 1
-                    except TelemetryError as exc:
-                        logger.error("Import failed for %s: %s", path.name, exc)
-                        failures.append(f"{path.name}: {exc}")
-                    except Exception as exc:  # noqa: BLE001 - must reach the user
-                        # An unexpected failure on a worker thread would end the
-                        # thread without a word. Report it like any other.
-                        logger.exception("Import crashed on %s", path.name)
-                        failures.append(f"{path.name}: {exc}")
-                    self.progress.emit(done, len(self._paths), path.name)
-        except Exception as exc:  # noqa: BLE001 - e.g. the catalog cannot be opened
-            logger.exception("Import could not run")
-            failures.append(str(exc))
-        finally:
-            self.finished.emit(imported, failures)
-
-
-class ComparisonMode(str, Enum):
-    """What the selected lap is drawn against."""
-
-    #: One lap on its own.
-    NONE = "none"
-    #: The fastest comparable lap of the same session. The default: it answers
-    #: "where did this lap lose time against my own best" without any setup.
-    SESSION_BEST = "session_best"
-    #: A lap the user pinned, possibly from another session, so a whole
-    #: afternoon can be measured against one benchmark.
-    PINNED = "pinned"
-    #: The theoretical ideal lap, stitched from the best segment of every lap
-    #: of the session. A target, not a record - see `IdealLap.CAVEAT`.
-    IDEAL = "ideal"
-
-
-@dataclass(slots=True)
-class CurrentView:
-    """Everything currently on screen, kept so it can be exported.
-
-    Rebuilding it at export time would mean re-deriving the comparison and the
-    ideal lap, and any divergence between the two derivations would produce a
-    file that does not match what the user was looking at when they asked for
-    it. Recording what was drawn is the only way to guarantee they agree.
-    """
-
-    selection: LapSelection
-    primary: pipeline.LapAnalysis
-    primary_label: str
-    benchmark: pipeline.LapAnalysis | None = None
-    benchmark_label: str = ""
-    #: The same lap without the gap, for prose that supplies the gap itself.
-    benchmark_summary: str = ""
-    delta: DeltaResult | None = None
-    ideal: IdealLap | None = None
-    corner_rows: list[pipeline.CornerRow] = field(default_factory=list)
-    consistency: ConsistencyReport | None = None
-
-
-class OpenSession:
-    """One open session file and its analysed laps.
-
-    Opening a session costs about 80 ms and each lap's analysis a few tens of
-    milliseconds, so caching the analysed laps makes moving between laps of one
-    session instant.
-    """
-
-    def __init__(
-        self,
-        session_id: str,
-        session: OpenedSession,
-        track_length_m: float | None,
-        name_match_tolerance_m: float,
-    ) -> None:
-        self.session_id = session_id
-        self.session = session
-        self.track_length_m = track_length_m
-        self._name_match_tolerance_m = name_match_tolerance_m
-        self._laps: dict[int, pipeline.LapAnalysis | None] = {}
-        self._session_analysis: pipeline.SessionAnalysis | None = None
-        #: `(distance_m, name)` for every corner the user has named at this
-        #: track, applied to each lap as it is analysed.
-        self.corner_references: list[tuple[float, str]] = []
-
-    def analysis_for(self, lap_index: int) -> pipeline.LapAnalysis | None:
-        if lap_index not in self._laps:
-            lap = self._lap(lap_index)
-            self._laps[lap_index] = (
-                pipeline.analyse_lap(self.session, lap, self.track_length_m)
-                if lap is not None else None
-            )
-        analysis = self._laps[lap_index]
-        if analysis is not None:
-            pipeline.name_corners(analysis, self.corner_references)
-        return analysis
-
-    def rename_corner(self, distance_m: float, name: str) -> None:
-        """Apply a new name immediately, without re-analysing the session."""
-        # The corner being renamed is the nearest named one within tolerance -
-        # the same rule the catalog applies - not one at exactly this distance:
-        # the apex of the same corner sits a metre or two elsewhere on another
-        # lap, and an exact match would leave two names competing for it.
-        tolerance = self._name_match_tolerance_m
-        nearest = min(
-            (ref for ref in self.corner_references
-             if abs(ref[0] - distance_m) <= tolerance),
-            key=lambda ref: abs(ref[0] - distance_m),
-            default=None,
-        )
-        self.corner_references = [
-            ref for ref in self.corner_references if ref is not nearest
-        ] + [(distance_m, name)]
-        for analysis in self._laps.values():
-            if analysis is not None:
-                pipeline.name_corners(analysis, self.corner_references)
-        # The ideal lap and the consistency report snapshot the labels, so they
-        # have to be rebuilt rather than patched. Cheap: the laps themselves are
-        # kept, and only the stitching and the statistics are redone.
-        self._session_analysis = None
-
-    def _lap(self, lap_index: int) -> Lap | None:
-        return next((lap for lap in self.session.laps if lap.index == lap_index), None)
-
-    def session_analysis(self) -> pipeline.SessionAnalysis:
-        """Every comparable lap analysed, and the ideal lap built from them.
-
-        Cached: it costs a few tens of milliseconds per lap, so a thirteen-lap
-        race is about half a second. Paid once, on the first request, rather
-        than on opening a session that the user may only want one lap of.
-        """
-        if self._session_analysis is None:
-            self._session_analysis = pipeline.analyse_session(
-                self.session, self.track_length_m,
-                corner_references=self.corner_references,
-                # Laps already analysed for display are not analysed twice, and
-                # the ones analysed here are kept for the next lap shown.
-                precomputed=self._laps,
-            )
-            for index, analysis in self._session_analysis.laps.items():
-                self._laps.setdefault(index, analysis)
-        return self._session_analysis
-
-    def best_comparable_lap(self, exclude_index: int | None = None) -> Lap | None:
-        """The session's fastest comparable lap, ignoring one index.
-
-        Read from the lap list rather than from the analyses, so choosing the
-        benchmark does not require analysing every lap of the session first.
-        """
-        candidates = [
-            lap for lap in self.session.comparable_laps
-            if lap.index != exclude_index and lap.time_s > 0
-        ]
-        return min(candidates, key=lambda lap: lap.time_s, default=None)
-
-    def close(self) -> None:
-        self.session.close()
-
-
-class SessionPool:
-    """The open session files, at most `capacity` of them.
-
-    Two is enough: the interface never draws more than two laps at once, and a
-    comparison against a pinned lap from another afternoon needs both files
-    open. Beyond that, holding files open only leaks handles.
-    """
-
-    def __init__(
-        self, loader: SessionLoader, catalog: CatalogGateway, capacity: int = 2
-    ) -> None:
-        self._loader = loader
-        self._catalog = catalog
-        self._capacity = capacity
-        self._open: dict[str, OpenSession] = {}
-        #: Session ids, least recently used first.
-        self._order: list[str] = []
-
-    def get(self, selection: LapSelection) -> OpenSession:
-        """Open the selection's session, reusing it when it is already open.
-
-        Raises:
-            TelemetryError: When the file cannot be read.
-        """
-        session_id = selection.session_id
-        if session_id in self._open:
-            self._touch(session_id)
-            return self._open[session_id]
-
-        track_length = self._catalog.track_length(selection.track_name)
-        references = [
-            (reference.reference_distance_m, reference.name)
-            for reference in self._catalog.corner_references(selection.track_name)
-            if reference.reference_distance_m is not None and reference.name
-        ]
-        session = self._loader.load(selection.source_path)
-
-        self._open[session_id] = OpenSession(
-            session_id, session, track_length, self._catalog.name_match_tolerance_m()
-        )
-        self._open[session_id].corner_references = references
-        self._touch(session_id)
-        self._evict()
-        return self._open[session_id]
-
-    def _touch(self, session_id: str) -> None:
-        if session_id in self._order:
-            self._order.remove(session_id)
-        self._order.append(session_id)
-
-    def _evict(self) -> None:
-        while len(self._order) > self._capacity:
-            oldest = self._order.pop(0)
-            self._open.pop(oldest).close()
-
-    def all(self) -> list[OpenSession]:
-        return list(self._open.values())
-
-    def close_all(self) -> None:
-        for opened in self._open.values():
-            opened.close()
-        self._open.clear()
-        self._order.clear()
-
-    def __len__(self) -> int:
-        return len(self._open)
+#: Bumped when a dock is added, removed or renamed, so a layout saved by an
+#: older build is dropped instead of half-applied.
+LAYOUT_STATE_VERSION = 1
+_SETTING_GEOMETRY = "window/geometry"
+_SETTING_STATE = "window/state"
 
 
 class MainWindow(QtWidgets.QMainWindow):
     """The application window."""
 
-    def __init__(self, gateways: Gateways) -> None:
+    def __init__(
+        self, gateways: Gateways, settings: QtCore.QSettings | None = None
+    ) -> None:
         super().__init__()
         self._gateways = gateways
+        #: Where the layout is remembered. Injectable so tests never touch the
+        #: user's real settings.
+        self._settings = settings if settings is not None else QtCore.QSettings()
         self._sessions = SessionPool(gateways.sessions, gateways.catalog)
         self._selection: LapSelection | None = None
         self._current: CurrentView | None = None
@@ -329,87 +75,149 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1360, 880)
         self._build()
         self._build_menus()
+        self._build_toolbar()
+        self._restore_layout()
         self.reload_catalog(select_first=True)
 
     # -- construction ------------------------------------------------------
 
     def _build(self) -> None:
+        # The centre: the warning banner above the traces. The banner is hidden
+        # unless the session being shown had its clock corrected, or a
+        # comparison had to be refused.
         central = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # The warning banner, above everything. Hidden unless the session being
-        # shown had its clock corrected, or a comparison had to be refused.
         self.warning_banner = QtWidgets.QLabel()
         self.warning_banner.setProperty("role", "warning")
         self.warning_banner.setWordWrap(True)
         self.warning_banner.hide()
         layout.addWidget(self.warning_banner)
 
-        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        self.chart = ChartStack()
+        layout.addWidget(self.chart, stretch=1)
+        self.setCentralWidget(central)
 
         self.browser = SessionBrowser(self._gateways.catalog)
-        self.browser.lap_selected.connect(self.show_lap)
-        self.splitter.addWidget(self.browser)
-
-        # The centre column: the traces, and under them the corner-by-corner
-        # debrief they support. The table sits below rather than beside because
-        # its rows are read against the same distance axis as the traces.
-        self.centre = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        self.chart = ChartStack()
         self.corner_table = CornerTable()
         self.consistency = ConsistencyPanel()
+        self.track_map = TrackMap()
+        self.friction = FrictionPanel()
 
-        # Tabs rather than another split: both are per-corner tables of the
-        # same lap, and stacking a third pane would leave every one of them too
-        # short to read.
+        # Tabs rather than two docks: both are per-corner tables of the same
+        # lap, and a fifth dock would leave every one of them too short to read.
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.addTab(self.corner_table, strings.CORNERS_TAB)
         self.tabs.addTab(self.consistency, strings.CONSISTENCY_TAB)
 
-        self.centre.addWidget(self.chart)
-        self.centre.addWidget(self.tabs)
-        self.centre.setStretchFactor(0, 3)
-        self.centre.setStretchFactor(1, 1)
-        self.centre.setSizes([600, 300])
-        self.splitter.addWidget(self.centre)
+        self.dock_sessions = self._make_dock(
+            "dock_sessions", strings.BROWSER_TITLE, self.browser)
+        self.dock_corners = self._make_dock(
+            "dock_corners", strings.DOCK_CORNERS, self.tabs)
+        self.dock_map = self._make_dock("dock_map", strings.MAP_TITLE, self.track_map)
+        self.dock_gg = self._make_dock("dock_gg", strings.GG_TITLE, self.friction)
+        self.docks = [
+            self.dock_sessions, self.dock_corners, self.dock_map, self.dock_gg,
+        ]
 
+        # Let the side docks run the full height, so the corner tables sit under
+        # the traces they are read against rather than under the whole window.
+        Corner, Area = QtCore.Qt.Corner, QtCore.Qt.DockWidgetArea
+        self.setCorner(Corner.TopLeftCorner, Area.LeftDockWidgetArea)
+        self.setCorner(Corner.BottomLeftCorner, Area.LeftDockWidgetArea)
+        self.setCorner(Corner.TopRightCorner, Area.RightDockWidgetArea)
+        self.setCorner(Corner.BottomRightCorner, Area.RightDockWidgetArea)
+        self.setDockOptions(
+            QtWidgets.QMainWindow.DockOption.AnimatedDocks
+            | QtWidgets.QMainWindow.DockOption.AllowNestedDocks
+            | QtWidgets.QMainWindow.DockOption.AllowTabbedDocks
+        )
+        self._arrange_docks()
+
+        self.browser.lap_selected.connect(self.show_lap)
         self.corner_table.corner_selected.connect(self._on_cursor_moved)
         self.corner_table.corner_zoomed.connect(self.chart.zoom_to)
         self.corner_table.corner_renamed.connect(self.rename_corner)
         self.consistency.corner_selected.connect(self._on_cursor_moved)
         self.consistency.stint_changed.connect(self._on_stint_changed)
-
-        # The right column: where the lap happened, and how hard the tyres were
-        # worked doing it. Both follow the traces' cursor, and the map drives it
-        # back - picking a corner on the map is how a driver thinks about a lap.
-        self.side = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        self.track_map = TrackMap()
-        self.friction = FrictionPanel()
-        self.side.addWidget(self.track_map)
-        self.side.addWidget(self.friction)
-        self.side.setSizes([460, 420])
-        self.splitter.addWidget(self.side)
-
+        # The map drives the cursor back: picking a corner on the map is how a
+        # driver thinks about a lap.
         self.chart.cursor_moved.connect(self._on_cursor_moved)
         self.track_map.distance_picked.connect(self._on_cursor_moved)
 
-        self.splitter.setStretchFactor(0, 0)
-        self.splitter.setStretchFactor(1, 1)
-        self.splitter.setStretchFactor(2, 0)
-        self.splitter.setSizes([380, 800, 420])
-        layout.addWidget(self.splitter, stretch=1)
-
-        self.setCentralWidget(central)
         self.setStatusBar(QtWidgets.QStatusBar())
         self.statusBar().showMessage(strings.STATUS_READY)
+
+    def _make_dock(
+        self, name: str, title: str, widget: QtWidgets.QWidget
+    ) -> QtWidgets.QDockWidget:
+        """A dock the user can hide, move, tab or float.
+
+        The object name is what `saveState` keys the arrangement on, so it must
+        be stable: renaming one orphans every saved layout.
+        """
+        dock = QtWidgets.QDockWidget(title, self)
+        dock.setObjectName(name)
+        dock.setWidget(widget)
+        return dock
+
+    def _arrange_docks(self) -> None:
+        """The default layout: sessions left, map over g-g on the right, the
+        corner tables under the traces."""
+        Area = QtCore.Qt.DockWidgetArea
+        # Dock first, then detach: a floating dock has to be docked before it
+        # can be taken out of its area and placed again.
+        for dock in self.docks:
+            dock.setFloating(False)
+            self.removeDockWidget(dock)
+
+        self.addDockWidget(Area.LeftDockWidgetArea, self.dock_sessions)
+        self.addDockWidget(Area.RightDockWidgetArea, self.dock_map)
+        self.splitDockWidget(
+            self.dock_map, self.dock_gg, QtCore.Qt.Orientation.Vertical
+        )
+        self.addDockWidget(Area.BottomDockWidgetArea, self.dock_corners)
+        for dock in self.docks:
+            dock.show()
+
+        horizontal, vertical = QtCore.Qt.Orientation.Horizontal, QtCore.Qt.Orientation.Vertical
+        self.resizeDocks([self.dock_sessions, self.dock_map], [380, 420], horizontal)
+        self.resizeDocks([self.dock_map, self.dock_gg], [460, 420], vertical)
+        self.resizeDocks([self.dock_corners], [300], vertical)
+
+    def reset_layout(self) -> None:
+        """Put every panel back where it started."""
+        self._arrange_docks()
+        self.toolbar.setVisible(True)
+        self.statusBar().showMessage(strings.STATUS_LAYOUT_RESET)
+
+    def _restore_layout(self) -> None:
+        """Apply the arrangement saved by the last run, if there is one.
+
+        Falls back to the default when the saved state no longer fits - a dock
+        was added or renamed since - rather than leaving a half-restored window.
+        """
+        geometry = self._settings.value(_SETTING_GEOMETRY)
+        state = self._settings.value(_SETTING_STATE)
+        if isinstance(geometry, QtCore.QByteArray) and not geometry.isEmpty():
+            self.restoreGeometry(geometry)
+        if isinstance(state, QtCore.QByteArray) and not state.isEmpty():
+            if not self.restoreState(state, LAYOUT_STATE_VERSION):
+                logger.warning("Saved window layout not usable; using the default")
+                self._arrange_docks()
+
+    def _save_layout(self) -> None:
+        self._settings.setValue(_SETTING_GEOMETRY, self.saveGeometry())
+        self._settings.setValue(_SETTING_STATE, self.saveState(LAYOUT_STATE_VERSION))
+        self._settings.sync()
 
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu(strings.MENU_FILE)
 
         self._import_actions: list[QtGui.QAction] = []
-        import_action = QtGui.QAction(strings.ACTION_IMPORT, self)
+        import_action = self.action_import = QtGui.QAction(strings.ACTION_IMPORT, self)
         import_action.setShortcut(QtGui.QKeySequence.StandardKey.Open)
         import_action.triggered.connect(self.import_session)
         file_menu.addAction(import_action)
@@ -419,7 +227,7 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addAction(import_folder)
         self._import_actions += [import_action, import_folder]
 
-        refresh = QtGui.QAction(strings.ACTION_REFRESH, self)
+        refresh = self.action_refresh = QtGui.QAction(strings.ACTION_REFRESH, self)
         refresh.setShortcut(QtGui.QKeySequence.StandardKey.Refresh)
         refresh.triggered.connect(lambda: self.reload_catalog())
         file_menu.addAction(refresh)
@@ -443,15 +251,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_export_actions(self, menu: QtWidgets.QMenu) -> None:
         export_menu = menu.addMenu(strings.MENU_EXPORT)
-        for label, handler in (
-            (strings.ACTION_EXPORT_PNG, self.export_png),
-            (strings.ACTION_EXPORT_CSV, self.export_csv),
-            (strings.ACTION_EXPORT_CORNERS_CSV, self.export_corners_csv),
-            (strings.ACTION_EXPORT_PDF, self.export_pdf),
+        self.export_actions: dict[str, QtGui.QAction] = {}
+        for key, label, handler in (
+            ("png", strings.ACTION_EXPORT_PNG, self.export_png),
+            ("csv", strings.ACTION_EXPORT_CSV, self.export_csv),
+            ("corners", strings.ACTION_EXPORT_CORNERS_CSV, self.export_corners_csv),
+            ("pdf", strings.ACTION_EXPORT_PDF, self.export_pdf),
         ):
             action = QtGui.QAction(label, self)
             action.triggered.connect(handler)
             export_menu.addAction(action)
+            self.export_actions[key] = action
 
     def _build_axis_actions(self, menu: QtWidgets.QMenu) -> None:
         axis_group = QtGui.QActionGroup(self)
@@ -489,17 +299,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.channel_actions[spec.key] = action
 
     def _build_panel_actions(self, menu: QtWidgets.QMenu) -> None:
-        panels = menu.addMenu(strings.MENU_PANELS)
+        panels = self._panels_menu = menu.addMenu(strings.MENU_PANELS)
 
-        for label, widget in (
-            (strings.ACTION_PANEL_MAP, self.track_map),
-            (strings.ACTION_PANEL_GG, self.friction),
-        ):
-            action = QtGui.QAction(label, self)
-            action.setCheckable(True)
-            action.setChecked(True)
-            action.toggled.connect(widget.setVisible)
-            panels.addAction(action)
+        # A dock's own view action stays in step with the dock however it was
+        # closed or reopened - from this menu or from its title bar.
+        for dock in self.docks:
+            panels.addAction(dock.toggleViewAction())
+        self.panel_toggle_actions = [d.toggleViewAction() for d in self.docks]
+        panels.addSeparator()
+        self.action_reset_layout = QtGui.QAction(strings.ACTION_RESET_LAYOUT, self)
+        self.action_reset_layout.triggered.connect(self.reset_layout)
+        panels.addAction(self.action_reset_layout)
 
         panels.addSeparator()
         colour_group = QtGui.QActionGroup(self)
@@ -547,10 +357,59 @@ class MainWindow(QtWidgets.QMainWindow):
             self.comparison_actions[mode] = action
 
         compare.addSeparator()
-        pin = QtGui.QAction(strings.ACTION_PIN_REFERENCE, self)
+        pin = self.action_pin = QtGui.QAction(strings.ACTION_PIN_REFERENCE, self)
         pin.setShortcut(QtGui.QKeySequence("Ctrl+R"))
         pin.triggered.connect(self.pin_current_lap)
         compare.addAction(pin)
+
+    def _build_toolbar(self) -> None:
+        """The actions used on every lap, one click away.
+
+        Text only: the actions have no icons, and a row of unlabelled glyphs
+        would be harder to read than the menu it duplicates. The same
+        `QAction` objects sit in the menus, so state (checked, enabled) is
+        shared rather than synchronised.
+        """
+        bar = self.toolbar = self.addToolBar(strings.TOOLBAR_MAIN)
+        bar.setObjectName("toolbar_main")
+        bar.setMovable(False)
+        bar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+
+        # A toolbar button shows the action's `iconText`, so a short wording can
+        # be given here while the menu keeps the full one. The tooltip stays the
+        # full text.
+        short = {
+            self.comparison_actions[ComparisonMode.SESSION_BEST]: strings.TOOLBAR_COMPARE_BEST,
+            self.comparison_actions[ComparisonMode.PINNED]: strings.TOOLBAR_COMPARE_PINNED,
+            self.comparison_actions[ComparisonMode.IDEAL]: strings.TOOLBAR_COMPARE_IDEAL,
+            self.action_pin: strings.TOOLBAR_PIN,
+            self.action_distance: strings.TOOLBAR_AXIS_DISTANCE,
+            self.action_time: strings.TOOLBAR_AXIS_TIME,
+            self.export_actions["png"]: strings.TOOLBAR_EXPORT_PNG,
+            self.export_actions["pdf"]: strings.TOOLBAR_EXPORT_PDF,
+        }
+        for action, label in short.items():
+            if not action.toolTip() or action.toolTip() == action.text().replace("&", ""):
+                action.setToolTip(action.text().replace("&", ""))
+            action.setIconText(label)
+
+        bar.addAction(self.action_import)
+        bar.addAction(self.action_refresh)
+        bar.addSeparator()
+        for mode in (ComparisonMode.NONE, ComparisonMode.SESSION_BEST,
+                     ComparisonMode.PINNED, ComparisonMode.IDEAL):
+            bar.addAction(self.comparison_actions[mode])
+        bar.addAction(self.action_pin)
+        bar.addSeparator()
+        bar.addAction(self.action_distance)
+        bar.addAction(self.action_time)
+        bar.addSeparator()
+        bar.addAction(self.export_actions["png"])
+        bar.addAction(self.export_actions["pdf"])
+
+        # Hideable like any panel, from the same menu.
+        self.panel_toggle_actions.append(bar.toggleViewAction())
+        self._panels_menu.addAction(bar.toggleViewAction())
 
     # -- catalog -----------------------------------------------------------
 
@@ -1205,6 +1064,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._import_worker.cancel()
             self._import_thread.quit()
             self._import_thread.wait()
+        self._save_layout()
         self._sessions.close_all()
         super().closeEvent(event)
 

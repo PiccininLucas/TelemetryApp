@@ -490,8 +490,20 @@ ANON_SAME_PATH = (
 
 # --- Panels -----------------------------------------------------------------
 MENU_PANELS = "&Painéis"
-ACTION_PANEL_MAP = "&Traçado"
-ACTION_PANEL_GG = "Diagrama &g-g"
+DOCK_CORNERS = "Curvas e consistência"
+TOOLBAR_MAIN = "Barra de ferramentas"
+#: Short forms for the toolbar, where the menu's full wording would push the
+#: last buttons into the overflow menu. The menu keeps the full text.
+TOOLBAR_COMPARE_BEST = "Melhor da sessão"
+TOOLBAR_COMPARE_PINNED = "Volta fixada"
+TOOLBAR_COMPARE_IDEAL = "Volta ideal"
+TOOLBAR_PIN = "Fixar referência"
+TOOLBAR_AXIS_DISTANCE = "Eixo: distância"
+TOOLBAR_AXIS_TIME = "Eixo: tempo"
+TOOLBAR_EXPORT_PNG = "Exportar PNG"
+TOOLBAR_EXPORT_PDF = "Exportar PDF"
+ACTION_RESET_LAYOUT = "&Restaurar layout padrão"
+STATUS_LAYOUT_RESET = "Layout padrão restaurado"
 
 WARN_COMPARE_DIFFERENT_TRACK = (
     "As duas voltas são de pistas diferentes ({track_a} e {track_b}). "
