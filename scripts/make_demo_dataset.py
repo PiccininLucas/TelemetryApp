@@ -17,10 +17,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lmu_telemetry.core.errors import TelemetryError  # noqa: E402
-from lmu_telemetry.export import anonymise  # noqa: E402
-from lmu_telemetry.logging_config import setup_logging  # noqa: E402
-from lmu_telemetry.ui import strings  # noqa: E402
+from lmu_telemetry.shared.errors import TelemetryError  # noqa: E402
+from lmu_telemetry.infrastructure.export import anonymise  # noqa: E402
+from lmu_telemetry.shared.logging_config import setup_logging  # noqa: E402
+from lmu_telemetry.shared import strings  # noqa: E402
 
 DEFAULT_OUTPUT = Path("data/demo")
 
@@ -63,13 +63,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("  " + strings.ANON_NOTHING_FOUND)
 
-    # Re-open the written file and look again. Verifying the artefact rather
-    # than trusting the writer is the only check that means anything before
-    # publishing one.
-    findings = anonymise.verify(destination, report.residues)
-    if findings:
+    # `anonymise_session` re-opened the written file and looked again. Verifying
+    # the artefact rather than trusting the writer is the only check that means
+    # anything before publishing one.
+    if not report.is_clean:
         print("\nFALHA NA VERIFICAÇÃO:", file=sys.stderr)
-        for finding in findings:
+        for finding in report.findings:
             print(f"  {finding}", file=sys.stderr)
         return 1
 

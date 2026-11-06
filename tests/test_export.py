@@ -1,7 +1,7 @@
 """Tests for the export layer.
 
 Everything here runs headless: matplotlib is pinned to Agg on import and
-nothing in `lmu_telemetry.export` touches Qt, which is what lets a report be
+nothing in `lmu_telemetry.infrastructure.export` touches Qt, which is what lets a report be
 produced from a script or from CI.
 """
 
@@ -16,11 +16,11 @@ import duckdb
 import numpy as np
 import pytest
 
-from lmu_telemetry.analysis import friction
-from lmu_telemetry.core.errors import TelemetryError
-from lmu_telemetry.core.models import Corner, Lap, LapFlag
-from lmu_telemetry.export import anonymise, charts, report, tables
-from lmu_telemetry.pipeline import CornerRow, LapAnalysis
+from lmu_telemetry.domain.analysis import friction
+from lmu_telemetry.shared.errors import TelemetryError
+from lmu_telemetry.domain.models import Corner, Lap, LapFlag
+from lmu_telemetry.infrastructure.export import anonymise, charts, report, tables
+from lmu_telemetry.application.pipeline import CornerRow, LapAnalysis
 
 
 # --------------------------------------------------------------------------- #
@@ -29,7 +29,7 @@ from lmu_telemetry.pipeline import CornerRow, LapAnalysis
 
 def make_analysis(n: int = 400) -> LapAnalysis:
     """A lap on a 1 m grid with every channel the exports can write."""
-    from lmu_telemetry.analysis.distance import DistanceReconstruction
+    from lmu_telemetry.domain.analysis.distance import DistanceReconstruction
 
     grid = np.arange(float(n))
     speed = 50.0 - 20.0 * np.exp(-((grid - 200.0) ** 2) / 2000.0)
@@ -143,7 +143,7 @@ def test_corner_csv_matches_the_table(tmp_path, corner_rows):
 def test_delta_column_is_blank_past_the_shorter_lap(tmp_path, analysis):
     """Beyond the end of the shorter lap nothing was measured, and interpolating
     would flatten rather than admit it."""
-    from lmu_telemetry.analysis.delta import DeltaResult
+    from lmu_telemetry.domain.analysis.delta import DeltaResult
 
     short = np.arange(0.0, 100.0)
     delta = DeltaResult(
@@ -179,7 +179,7 @@ def test_charts_render_without_a_display(tmp_path, analysis):
 
 
 def test_charts_draw_the_comparison_and_the_delta(tmp_path, analysis):
-    from lmu_telemetry.analysis.delta import DeltaResult
+    from lmu_telemetry.domain.analysis.delta import DeltaResult
 
     grid = analysis.grid_m
     delta = DeltaResult(grid_m=grid, delta_s=np.linspace(-0.2, 0.4, len(grid)),
@@ -244,7 +244,7 @@ def test_report_states_the_ideal_lap_s_caveat(tmp_path, analysis, corner_rows):
     """A PDF outlives the session it came from and gets forwarded to people who
     were not there. A target that is not achievable must not read as one that
     is."""
-    from lmu_telemetry.analysis.ideal_lap import IdealLap
+    from lmu_telemetry.domain.analysis.ideal_lap import IdealLap
 
     ideal = IdealLap(
         segments=[], grid_m=analysis.grid_m, elapsed_s=analysis.elapsed_s,
@@ -258,7 +258,7 @@ def test_report_states_the_ideal_lap_s_caveat(tmp_path, analysis, corner_rows):
         primary_label="Volta 8", corner_rows=corner_rows, ideal=ideal,
     ))
 
-    from lmu_telemetry.ui import strings
+    from lmu_telemetry.shared import strings
 
     # The note is built from the same string the interface shows, so a change
     # to one cannot silently drop the other.
@@ -268,7 +268,7 @@ def test_report_states_the_ideal_lap_s_caveat(tmp_path, analysis, corner_rows):
 
 def test_report_column_labels_avoid_glyphs_helvetica_cannot_print(tmp_path):
     """WinAnsi has no Greek: a sigma comes out as "s" and a delta as "D"."""
-    from lmu_telemetry.ui import strings
+    from lmu_telemetry.shared import strings
 
     for label in (strings.PDF_COLUMN_DELTA, strings.PDF_COLUMN_BRAKING_STD,
                   strings.PDF_COLUMN_SPEED_STD,
@@ -387,6 +387,18 @@ def test_verification_finds_a_residue(tmp_path, personal_session):
     destination = tmp_path / "out.duckdb"
     result = anonymise.anonymise_session(personal_session, destination)
     assert anonymise.verify(destination, result.residues) == []
+    assert result.is_clean
+
+
+def test_the_report_is_not_clean_when_the_written_file_still_holds_the_name():
+    """`is_clean` used to be a constant. It must reflect what verification found."""
+    from pathlib import Path
+
+    dirty = anonymise.AnonymisationReport(
+        source=Path("a"), destination=Path("b"),
+        findings=("metadata.value: 1 × 'Name'",),
+    )
+    assert not dirty.is_clean
 
 
 def test_anonymisation_refuses_to_overwrite_without_being_told(
@@ -481,8 +493,8 @@ def test_the_committed_demo_carries_no_personal_data():
 def test_the_committed_demo_still_loads_and_analyses():
     """Anonymising must not have damaged the telemetry: a demo file that cannot
     be opened demonstrates nothing."""
-    from lmu_telemetry import pipeline
-    from lmu_telemetry.ingest.session_loader import load_session
+    from lmu_telemetry.application import pipeline
+    from lmu_telemetry.infrastructure.ingest.session_loader import load_session
 
     path = _demo_files()[0]
     with load_session(path, with_hash=False) as session:

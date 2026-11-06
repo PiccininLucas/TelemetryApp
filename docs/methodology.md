@@ -411,19 +411,18 @@ the only check that means anything before publishing one.
 ## Layering, and why it is enforced
 
 ```
-ingest/     the only layer that knows the file format exists
-core/       models, units, errors. Depends on nothing.
-analysis/   numpy arrays in, numbers out
-storage/    session cache + historical catalog
-ui/         PySide6. All user-visible text lives in ui/strings.py
-export/     PNG, CSV, PDF, anonymisation
+shared/          strings, errors, config, logging, formatting (imports nothing from the project)
+domain/          models, units, resampling, and analysis/ (numpy arrays in, numbers out)
+application/     pipeline and the ports it reads through
+infrastructure/  ingest/ (the only code that knows the file format), storage/, export/
+presentation/    PySide6
 ```
 
-`analysis` may import numpy, scipy and the standard library — nothing else. That
+`domain.analysis` may import numpy, scipy and the standard library — nothing else. That
 is what lets every formula here be tested without the game installed, and what
 would let a live data source feed the same functions later without touching an
 equation.
 
 `tests/test_architecture.py` walks the **transitive** import closure to enforce
-it, because a direct-imports-only check passes happily while `analysis` reaches
-`ingest` through `core`.
+it, because a direct-imports-only check passes happily while the analysis reaches
+the ingestion code through a third module.

@@ -16,8 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.ingest import channel_registry, corrections
-from lmu_telemetry.ingest.session_loader import load_session
+from lmu_telemetry.infrastructure.ingest import channel_registry, corrections
+from lmu_telemetry.infrastructure.ingest.session_loader import load_session
 
 # Minimum correlation for a claim about a channel's identity to stand. The
 # measured values are above 0.97; 0.8 leaves room for a different car or track
@@ -172,7 +172,7 @@ def test_g_force_lat_actually_holds_longitudinal_acceleration(
     assert abs(against_longitudinal) > MIN_IDENTIFICATION_CORRELATION, (
         f"'G Force Lat' vs dV/dt correlation is {against_longitudinal:+.3f}. "
         f"It was measured at -0.99; the game may have fixed the labelling, in "
-        f"which case ingest/corrections.py must be revisited."
+        f"which case infrastructure/ingest/corrections.py must be revisited."
     )
     assert abs(against_longitudinal) > abs(against_lateral)
     assert against_longitudinal < 0, "the channel is negated as well as swapped"

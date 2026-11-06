@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.core import units
+from lmu_telemetry.domain import units
 
 
 # --------------------------------------------------------------------------- #

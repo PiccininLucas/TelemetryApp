@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from lmu_telemetry.core.models import Lap, LapFlag, SessionInfo
-from lmu_telemetry.ingest.channel_registry import ChannelFormat, ChannelInfo
-from lmu_telemetry.ingest.time_base import TimeBase, TimeBaseSource
-from lmu_telemetry.storage import cache, paths
+from lmu_telemetry.domain.models import Lap, LapFlag, SessionInfo
+from lmu_telemetry.infrastructure.ingest.channel_registry import ChannelFormat, ChannelInfo
+from lmu_telemetry.infrastructure.ingest.time_base import TimeBase, TimeBaseSource
+from lmu_telemetry.infrastructure.storage import cache, paths
 
 
 @pytest.fixture(autouse=True)
@@ -240,12 +240,6 @@ def test_no_temporary_file_is_left_behind():
 # --------------------------------------------------------------------------- #
 # Housekeeping
 # --------------------------------------------------------------------------- #
-
-def test_lap_frames_directory_is_created_for_phase_4():
-    write_sample()
-    directory = paths.session_cache_dir(SESSION_ID) / cache.LAP_FRAMES_DIRNAME
-    assert directory.is_dir()
-
 
 def test_clear_removes_one_session():
     write_sample()

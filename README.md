@@ -530,18 +530,21 @@ Two things the real data corrected:
 
 ### Layering
 
-`analysis` imports numpy, scipy and the standard library — nothing else.
+`domain.analysis` imports numpy, scipy and the standard library — nothing else.
 `tests/test_architecture.py` walks the **transitive** import closure to enforce
-it, because a direct-imports-only check passes happily while `analysis` reaches
-`ingest` through `core`. `lmu_telemetry/pipeline.py` is the seam that joins
-ingestion to analysis, and is what the UI will use.
+it, because a direct-imports-only check passes happily while the analysis reaches
+the ingestion code through a third module. `lmu_telemetry/application/pipeline.py`
+is the seam that joins ingestion to analysis, and is what the UI uses.
 
 ---
 
 ## Storage
 
 Everything the app writes lives under `~/.lmu-telemetry` (override with
-`LMU_TELEMETRY_DATA_DIR`). Nothing is ever written next to the game's files, and
+`LMU_TELEMETRY_DATA_DIR`). To change a threshold without editing the repository, put
+just the keys you want in `~/.lmu-telemetry/config.toml` (or the file named by
+`LMU_TELEMETRY_CONFIG`); they are merged over `config/defaults.toml`, and a key
+that does not exist is an error rather than being ignored. Nothing is ever written next to the game's files, and
 session files are opened read-only.
 
 ```bash
@@ -581,33 +584,33 @@ sessions costs about 5 s before anything is drawn. So the cache stores the
 **manifest** — identity, time base, channel registry, lap table — at a few
 kilobytes each. The whole cache for 64 real sessions is **1.2 MB**.
 
-Phase 4 adds the artifact that genuinely is expensive to recompute: per-lap
-frames on a 1 m distance grid, which need cumulative integration of speed and a
-per-lap scale correction. Those land in `laps/` inside the same session folder
-and reuse the same hash invalidation.
+The other artifact that is expensive to recompute is the per-lap frame on a 1 m
+distance grid (cumulative integration of speed plus a scale correction). It is
+not cached: a lap analyses in about 16 ms, which is cheaper than reading it back.
 
 ---
 
 ## Architecture
 
-Five layers, dependencies strictly in one direction.
+Clean Architecture: five layers, dependencies pointing inward only.
 
 ```
 lmu_telemetry/
-├── ingest/     # the only layer that knows the file format exists
-├── core/       # models, units, errors. Depends on nothing.
-├── analysis/   # numpy arrays in, numbers out
-├── storage/    # parquet cache + historical catalog
-├── ui/         # PySide6. All user-visible text lives in ui/strings.py
-└── export/     # PNG, CSV, PDF report
+├── shared/          # strings, errors, config, logging, formatting. Imports nothing from the project.
+├── domain/          # models, units, resampling, and analysis/ (numpy arrays in, numbers out)
+├── application/     # pipeline.py and the ports it reads a session through
+├── infrastructure/  # ingest/ (the only code that knows the file format), storage/, export/
+└── presentation/    # PySide6. All user-visible text lives in shared/strings.py
 ```
 
-**`analysis` may not import `ingest`, `ui`, `storage`, `export`, `duckdb`,
-`pandas` or Qt.** It takes numpy arrays and returns numbers. That is what lets
+**`domain` and `application` may not import `duckdb`, `pandas`, Qt or any outer
+layer.** The analysis takes numpy arrays and returns numbers. That is what lets
 every formula be tested without the game installed, and what would let a live
 data source feed the same functions later without touching an equation. The
 rule is enforced mechanically by `tests/test_architecture.py`, which parses
-imports with `ast` rather than grepping.
+imports with `ast` rather than grepping. Two presentation modules still reach
+`infrastructure` directly; the test lists them as known debt that can only
+shrink.
 
 On-screen charts use `pyqtgraph` because a long session is hundreds of
 thousands of points per channel and zoom has to stay fluid; `matplotlib` is
@@ -648,7 +651,7 @@ not guaranteed to be achievable", the fact that distance is reconstructed rather
 than recorded, and the fact that the acceleration channels arrive mislabelled
 are reproduced in the document rather than assumed to be remembered.
 
-Nothing in `lmu_telemetry/export/` imports Qt, so a report can be produced over
+Nothing in `lmu_telemetry/infrastructure/export/` imports Qt, so a report can be produced over
 SSH or in CI. `matplotlib` is pinned to the Agg backend on import.
 
 ---

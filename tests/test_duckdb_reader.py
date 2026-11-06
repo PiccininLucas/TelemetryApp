@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lmu_telemetry.core.errors import SchemaError, SessionFileError
-from lmu_telemetry.ingest import duckdb_reader
+from lmu_telemetry.shared.errors import SchemaError, SessionFileError
+from lmu_telemetry.infrastructure.ingest import duckdb_reader
 
 
 # --------------------------------------------------------------------------- #
@@ -207,7 +207,7 @@ def test_real_continuous_channels_have_no_time_column(real_session_con):
     If a continuous channel ever gained a `ts` column, `t[i] = i / frequency`
     would stop being the right way to read it, and this test is the tripwire.
     """
-    from lmu_telemetry.ingest import channel_registry
+    from lmu_telemetry.infrastructure.ingest import channel_registry
 
     registry = channel_registry.build_registry(real_session_con)
     continuous = channel_registry.continuous_channels(registry)
@@ -221,7 +221,7 @@ def test_real_continuous_channels_have_no_time_column(real_session_con):
 
 
 def test_real_file_has_no_unknown_layouts(real_session_con):
-    from lmu_telemetry.ingest import channel_registry
+    from lmu_telemetry.infrastructure.ingest import channel_registry
 
     tables = [
         t for t in duckdb_reader.list_tables(real_session_con)

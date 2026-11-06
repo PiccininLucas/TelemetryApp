@@ -1,19 +1,29 @@
-"""Enforce the layering rule that makes the analysis testable.
+"""Enforce the Clean Architecture layering.
 
-`lmu_telemetry.analysis` must depend on nothing but numpy, scipy and the
-standard library. Two things rely on it: every formula can be tested against
-synthetic data with the game absent, and a live data source could feed the same
-functions later without touching a single equation.
+    presentation ─┐
+                  ├─> application ─> domain ─> shared
+    infrastructure┘
 
-The check follows the **transitive** import closure, not just each module's own
-imports. A direct-imports-only check passes happily while `analysis` reaches
-`ingest` through `core`, which is exactly the kind of drift that goes unnoticed.
+Dependencies point inward only:
 
-One exception is allowed and is itself tested: `ui.strings`. The specification
-requires all user-visible text to live in one module, `core` raises errors
-carrying user-visible messages, and `analysis` reaches `core`. That is only
-harmless because `ui.strings` is pure data importing nothing at all, which
-`test_strings_module_is_a_leaf` verifies.
+- `shared`: cross-cutting kernel (user-visible strings, errors, configuration,
+  logging, formatting). Imports nothing from the rest of the project.
+- `domain`: models, units, resampling and every formula in `domain.analysis`.
+  Numpy, scipy and the standard library only.
+- `application`: the pipeline that joins the two, and the ports (`SessionData`)
+  it reads data through. Knows no file format, no database, no GUI.
+- `infrastructure`: DuckDB ingestion, the catalog and cache, export. Implements
+  what the layers above need.
+- `presentation`: the PySide6 interface.
+
+Two things rely on this: every formula can be tested against synthetic data with
+the game absent, and a live data source could feed the same pipeline later
+without touching a single equation.
+
+The domain check follows the **transitive** import closure, not just each
+module's own imports. A direct-imports-only check passes happily while the
+domain reaches infrastructure through a third module, which is exactly the kind
+of drift that goes unnoticed.
 """
 
 from __future__ import annotations
@@ -27,26 +37,41 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_ROOT = PROJECT_ROOT / "lmu_telemetry"
 PACKAGE = "lmu_telemetry"
 
-#: Third-party modules `analysis` may never import.
-FORBIDDEN_EXTERNAL = (
+#: Each layer and the layers it may import (itself always allowed).
+ALLOWED_LAYERS: dict[str, frozenset[str]] = {
+    "shared": frozenset({"shared"}),
+    "domain": frozenset({"domain", "shared"}),
+    "application": frozenset({"application", "domain", "shared"}),
+    "infrastructure": frozenset({"infrastructure", "application", "domain", "shared"}),
+    "presentation": frozenset({"presentation", "application", "domain", "shared"}),
+}
+
+#: Third-party modules the inner layers may never import.
+FORBIDDEN_EXTERNAL_INNER = (
     "duckdb", "pandas", "PySide6", "shiboken6", "pyqtgraph",
     "matplotlib", "reportlab", "pyarrow",
 )
 
-#: Internal packages `analysis` may never reach, directly or transitively.
-FORBIDDEN_INTERNAL = (
-    f"{PACKAGE}.ingest",
-    f"{PACKAGE}.ui",
-    f"{PACKAGE}.storage",
-    f"{PACKAGE}.export",
-)
-
-#: Documented exception: a pure-data leaf, proven leaf-like by its own test.
-ALLOWED_INTERNAL_EXCEPTIONS = frozenset({f"{PACKAGE}.ui.strings", f"{PACKAGE}.ui"})
+#: KNOWN DEBT, not a design. These presentation modules still reach
+#: infrastructure directly: `MainWindow` opens the catalog, loads sessions and
+#: writes exports itself, and `SessionBrowser` queries the catalog. The way out
+#: is to give them gateways (ports in `application`, injected from `main.py`).
+#: The list may only shrink: `test_presentation_debt_is_not_stale` fails when an
+#: entry no longer applies, and any new reach fails `test_layer_dependencies`.
+PRESENTATION_INFRASTRUCTURE_DEBT: dict[str, frozenset[str]] = {
+    f"{PACKAGE}.presentation.main_window": frozenset({
+        f"{PACKAGE}.infrastructure.export",
+        f"{PACKAGE}.infrastructure.ingest.session_loader",
+        f"{PACKAGE}.infrastructure.storage",
+    }),
+    f"{PACKAGE}.presentation.session_browser": frozenset({
+        f"{PACKAGE}.infrastructure.storage",
+    }),
+}
 
 
 def module_name_for(path: Path) -> str:
-    """`lmu_telemetry/analysis/delta.py` -> `lmu_telemetry.analysis.delta`."""
+    """`lmu_telemetry/domain/analysis/delta.py` -> `lmu_telemetry.domain.analysis.delta`."""
     relative = path.relative_to(PROJECT_ROOT).with_suffix("")
     parts = list(relative.parts)
     if parts[-1] == "__init__":
@@ -86,12 +111,7 @@ def path_for(module: str) -> Path | None:
 
 
 def transitive_imports(start: Path) -> dict[str, list[str]]:
-    """Every module reachable from `start`, mapped to how it was reached.
-
-    Returns:
-        Module name -> the import chain that led to it, so a failure can name
-        the actual path rather than only the endpoint.
-    """
+    """Every module reachable from `start`, mapped to how it was reached."""
     reached: dict[str, list[str]] = {}
     queue: list[tuple[Path, list[str]]] = [(start, [module_name_for(start)])]
 
@@ -110,82 +130,126 @@ def transitive_imports(start: Path) -> dict[str, list[str]]:
     return reached
 
 
-def analysis_modules() -> list[Path]:
-    return sorted((PACKAGE_ROOT / "analysis").rglob("*.py"))
+def layer_of(module: str) -> str | None:
+    """`lmu_telemetry.domain.models` -> `domain`; None for anything else."""
+    parts = module.split(".")
+    if len(parts) >= 2 and parts[0] == PACKAGE and parts[1] in ALLOWED_LAYERS:
+        return parts[1]
+    return None
 
 
-def test_analysis_package_exists():
-    assert (PACKAGE_ROOT / "analysis").is_dir()
+def modules_in(layer: str) -> list[Path]:
+    return sorted(
+        p for p in (PACKAGE_ROOT / layer).rglob("*.py") if "__pycache__" not in p.parts
+    )
 
 
-@pytest.mark.parametrize("path", analysis_modules(), ids=lambda p: p.name)
-def test_analysis_layer_stays_pure(path: Path):
-    """No module reachable from `analysis` may touch a forbidden dependency."""
+def _is_debt(importer: str, imported: str) -> bool:
+    return any(
+        imported == allowed or imported.startswith(allowed + ".")
+        for allowed in PRESENTATION_INFRASTRUCTURE_DEBT.get(importer, ())
+    )
+
+
+# --- structure ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("layer", sorted(ALLOWED_LAYERS))
+def test_layer_package_exists(layer: str):
+    assert (PACKAGE_ROOT / layer / "__init__.py").is_file()
+
+
+def test_every_module_belongs_to_a_layer():
+    """A stray module at the package root would sit outside the rule."""
+    strays = [
+        p.name for p in PACKAGE_ROOT.glob("*.py") if p.name != "__init__.py"
+    ] + [
+        d.name for d in PACKAGE_ROOT.iterdir()
+        if d.is_dir() and d.name != "__pycache__" and d.name not in ALLOWED_LAYERS
+    ]
+    assert strays == [], f"outside every layer: {strays}"
+
+
+# --- dependency rule ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("layer", sorted(ALLOWED_LAYERS))
+def test_layer_dependencies(layer: str):
+    """Each module imports only its own layer and the ones inside it."""
+    allowed = ALLOWED_LAYERS[layer]
+    offenders: list[str] = []
+
+    for path in modules_in(layer):
+        importer = module_name_for(path)
+        for imported in sorted(imports_of(path)):
+            target = layer_of(imported)
+            if target is None or target in allowed:
+                continue
+            if layer == "presentation" and _is_debt(importer, imported):
+                continue
+            offenders.append(f"{importer} imports {imported}")
+
+    assert offenders == [], (
+        f"`{layer}` may only depend on {sorted(allowed)}:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_presentation_debt_is_not_stale():
+    """Remove an entry once the module stops reaching infrastructure."""
+    stale: list[str] = []
+    for importer, allowed in PRESENTATION_INFRASTRUCTURE_DEBT.items():
+        path = path_for(importer)
+        imports = imports_of(path) if path else set()
+        for entry in sorted(allowed):
+            if not any(i == entry or i.startswith(entry + ".") for i in imports):
+                stale.append(f"{importer}: {entry}")
+    assert stale == [], "debt entries no longer needed:\n  " + "\n  ".join(stale)
+
+
+@pytest.mark.parametrize(
+    "path", modules_in("domain") + modules_in("application"),
+    ids=lambda p: str(p.relative_to(PACKAGE_ROOT)),
+)
+def test_inner_layers_stay_pure(path: Path):
+    """No module reachable from the domain or application may touch a
+    forbidden library or an outer layer - however indirectly."""
+    layer = layer_of(module_name_for(path))
+    allowed = ALLOWED_LAYERS[layer]
+
     for module, chain in transitive_imports(path).items():
-        if module in ALLOWED_INTERNAL_EXCEPTIONS:
-            continue
-
         root = module.split(".")[0]
-        assert root not in FORBIDDEN_EXTERNAL, (
+        assert root not in FORBIDDEN_EXTERNAL_INNER, (
             f"{path.name} reaches {module!r} via {' -> '.join(chain)}. "
-            f"The analysis layer takes numpy arrays and returns numbers; move "
-            f"the {root} dependency to the caller."
+            f"Inner layers take numpy arrays and return numbers; move the "
+            f"{root} dependency to infrastructure."
+        )
+        target = layer_of(module)
+        assert target is None or target in allowed, (
+            f"{path.name} reaches {module!r} via {' -> '.join(chain)}, "
+            f"which is in `{target}`; `{layer}` may not depend on it."
         )
 
-        for forbidden in FORBIDDEN_INTERNAL:
-            assert not (module == forbidden or module.startswith(forbidden + ".")), (
-                f"{path.name} reaches {module!r} via {' -> '.join(chain)}. "
-                f"The analysis layer must not depend on {forbidden}."
-            )
+
+# --- specific guarantees -----------------------------------------------------
 
 
 def test_strings_module_is_a_leaf():
-    """The one allowed exception must stay harmless.
-
-    `ui.strings` is reachable from `analysis` through `core`. That is acceptable
-    only while it imports nothing from this project - the moment it imports Qt,
-    the exception stops being free and this test says so.
-    """
-    strings = PACKAGE_ROOT / "ui" / "strings.py"
+    """`shared.strings` is reachable from every layer, so it must stay harmless:
+    pure data that imports nothing from this project."""
+    strings = PACKAGE_ROOT / "shared" / "strings.py"
     internal = [m for m in imports_of(strings) if m.startswith(PACKAGE)]
     assert internal == [], (
-        f"ui/strings.py must import nothing from {PACKAGE}, but imports {internal}. "
-        f"It is allowed as an exception to the layering rule precisely because "
-        f"it is pure data."
+        f"shared/strings.py must import nothing from {PACKAGE}, but imports "
+        f"{internal}. It is shared by every layer precisely because it is pure data."
     )
 
 
 def test_analysis_does_not_render_text():
     """Analysis returns numbers. Formatting belongs to whoever displays them."""
-    for path in analysis_modules():
+    for path in sorted((PACKAGE_ROOT / "domain" / "analysis").rglob("*.py")):
         for module in imports_of(path):
             assert "strings" not in module, (
                 f"{path.name} imports {module!r}; analysis must not format text."
-            )
-
-
-def test_core_does_not_depend_on_ingest_or_storage():
-    """`core` is the bottom of the stack and must stay there."""
-    for path in sorted((PACKAGE_ROOT / "core").rglob("*.py")):
-        for module in imports_of(path):
-            for forbidden in (f"{PACKAGE}.ingest", f"{PACKAGE}.storage",
-                              f"{PACKAGE}.analysis", f"{PACKAGE}.export"):
-                assert not module.startswith(forbidden), (
-                    f"core/{path.name} imports {module!r}"
-                )
-
-
-def test_ingest_does_not_depend_on_storage_or_ui():
-    """Reading files must not know where the app keeps things, nor how it draws
-    them - that is what would let a live source replace the file reader."""
-    for path in sorted((PACKAGE_ROOT / "ingest").rglob("*.py")):
-        for module in imports_of(path):
-            for forbidden in (f"{PACKAGE}.storage", f"{PACKAGE}.export"):
-                assert not module.startswith(forbidden), (
-                    f"ingest/{path.name} imports {module!r}"
-                )
-            assert not module.startswith("PySide6"), (
-                f"ingest/{path.name} imports Qt"
             )
 
 

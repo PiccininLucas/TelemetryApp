@@ -7,10 +7,14 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # The application is developed and used on Windows: paths, the console
+        # code page and Qt's platform plugin all behave differently there, and a
+        # Linux-only run would not see a regression in any of them.
+        os: [ubuntu-latest, windows-latest]
         # 3.14 is the development version; 3.13 guards against accidentally
         # depending on a 3.14-only feature. Every pin in requirements.txt has
         # wheels for both.

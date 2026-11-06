@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.core.errors import ChannelNotFoundError
-from lmu_telemetry.ingest import channel_registry, duckdb_reader, events
-from lmu_telemetry.ingest.events import EventSeries
+from lmu_telemetry.shared.errors import ChannelNotFoundError
+from lmu_telemetry.infrastructure.ingest import channel_registry, duckdb_reader, events
+from lmu_telemetry.infrastructure.ingest.events import EventSeries
 
 
 def make_series(times, values, name="Test"):
@@ -184,7 +184,7 @@ def test_real_event_timestamps_share_the_gps_clock(real_session_con):
     """Event `ts` and `GPS Time` have the same origin, so no offset is applied
     anywhere in the pipeline. If that ever stopped being true, every lap
     boundary would land in the wrong place."""
-    from lmu_telemetry.ingest import time_base
+    from lmu_telemetry.infrastructure.ingest import time_base
 
     registry = channel_registry.build_registry(real_session_con)
     base = time_base.build_time_base(real_session_con, registry)
@@ -216,7 +216,7 @@ def test_channel_times_of_an_event_channel_come_from_its_ts_column(
     real race it placed `Gear`'s 962 shift events 1.5 s apart instead of at the
     instants they happened, and put the car in neutral for half of every lap.
     """
-    from lmu_telemetry.ingest.session_loader import load_session
+    from lmu_telemetry.infrastructure.ingest.session_loader import load_session
 
     with load_session(synthetic_session, with_hash=False) as session:
         times = session.channel_times("Gear")
@@ -233,12 +233,12 @@ def test_event_channel_resampling_holds_the_gear_between_shifts(
 ):
     """A gear is whatever was last selected, so it is held, never interpolated.
     Interpolating would invent a gear 2.5 halfway through a shift."""
-    from lmu_telemetry.ingest import time_base
-    from lmu_telemetry.ingest.session_loader import load_session
+    from lmu_telemetry.domain import resampling
+    from lmu_telemetry.infrastructure.ingest.session_loader import load_session
 
     with load_session(synthetic_session, with_hash=False) as session:
         grid = np.array([0.0, 0.15, 0.3, 0.5, 0.7, 0.9])
-        held = time_base.resample_to_grid(
+        held = resampling.resample_to_grid(
             session.channel("Gear"), session.channel_times("Gear"),
             grid, discrete=True,
         )

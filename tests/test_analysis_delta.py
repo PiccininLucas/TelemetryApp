@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.analysis import delta
+from lmu_telemetry.domain.analysis import delta
 
 
 def constant_speed_lap(speed_ms: float, length_m: float = 1000.0, n: int = 1001):

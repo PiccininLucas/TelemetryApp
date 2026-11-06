@@ -19,16 +19,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6 import QtWidgets  # noqa: E402
 
-from lmu_telemetry.core.models import Lap, LapFlag, SessionInfo  # noqa: E402
-from lmu_telemetry.storage import catalog, paths  # noqa: E402
-from lmu_telemetry.ui import strings, theme  # noqa: E402
-from lmu_telemetry.ui.chart_panel import (  # noqa: E402
+from lmu_telemetry.domain.models import Lap, LapFlag, SessionInfo  # noqa: E402
+from lmu_telemetry.infrastructure.storage import catalog, paths  # noqa: E402
+from lmu_telemetry.shared import strings  # noqa: E402
+from lmu_telemetry.presentation import theme  # noqa: E402
+from lmu_telemetry.presentation.chart_panel import (  # noqa: E402
     ROW_DELTA, ROW_GEAR, ROW_PEDALS, ROW_SPEED, AxisMode, ChartStack, LapTrace, Role,
 )
-from lmu_telemetry.ui.formatting import (  # noqa: E402
+from lmu_telemetry.shared.formatting import (  # noqa: E402
     format_gap, format_lap_time, format_value,
 )
-from lmu_telemetry.ui.session_browser import SessionBrowser  # noqa: E402
+from lmu_telemetry.presentation.session_browser import SessionBrowser  # noqa: E402
 
 
 def make_trace(
@@ -506,7 +507,7 @@ def test_main_window_builds_and_closes_cleanly(qt_app, catalog_with_sessions):
     """Building the window opens a session file; closing it must release the
     connection, or a long-running application leaks a handle per session
     viewed."""
-    from lmu_telemetry.ui.main_window import MainWindow
+    from lmu_telemetry.presentation.main_window import MainWindow
 
     window = MainWindow()
     try:
@@ -518,10 +519,101 @@ def test_main_window_builds_and_closes_cleanly(qt_app, catalog_with_sessions):
         window.close()
 
 
+def _wait_until(condition, timeout_s: float = 30.0) -> bool:
+    """Run the event loop until `condition()` holds, or give up.
+
+    `time.sleep` rather than `QTest.qWait`: qWait does not release the GIL, so a
+    worker thread under test would crawl while the test waited for it.
+    """
+    import time
+
+    from PySide6 import QtCore
+
+    deadline = time.monotonic() + timeout_s
+    while not condition() and time.monotonic() < deadline:
+        QtCore.QCoreApplication.processEvents()
+        time.sleep(0.01)
+    QtCore.QCoreApplication.processEvents()
+    return condition()
+
+
+def _demo_session_files():
+    from pathlib import Path
+
+    return sorted((Path(__file__).resolve().parent.parent / "data" / "demo").glob("*.duckdb"))
+
+
+@pytest.mark.skipif(not _demo_session_files(), reason="no demo dataset in the tree")
+def test_importing_runs_off_the_interface_thread(qt_app, tmp_path, monkeypatch):
+    """Importing a folder used to freeze the window for its whole duration."""
+    import threading
+
+    from lmu_telemetry.infrastructure.storage import importer
+    from lmu_telemetry.presentation.main_window import MainWindow
+
+    monkeypatch.setenv(paths.ENV_DATA_DIR, str(tmp_path / "data"))
+    main_thread = threading.current_thread()
+    import_threads = []
+    original = importer.import_session_file
+
+    def recording(*args, **kwargs):
+        import_threads.append(threading.current_thread())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(importer, "import_session_file", recording)
+
+    window = MainWindow()
+    try:
+        window._import(_demo_session_files())
+        assert window._import_thread is not None
+        assert _wait_until(lambda: window._import_thread is None)
+
+        assert import_threads and all(t is not main_thread for t in import_threads)
+        assert window.browser.tree.topLevelItemCount() == 1
+        assert all(action.isEnabled() for action in window._import_actions)
+    finally:
+        window.close()
+
+
+@pytest.mark.skipif(not _demo_session_files(), reason="no demo dataset in the tree")
+def test_a_second_import_is_refused_while_one_is_running(qt_app, tmp_path, monkeypatch):
+    from lmu_telemetry.shared import strings as ui_strings
+    from lmu_telemetry.presentation.main_window import MainWindow
+
+    monkeypatch.setenv(paths.ENV_DATA_DIR, str(tmp_path / "data"))
+    window = MainWindow()
+    try:
+        window._import(_demo_session_files())
+        first = window._import_thread
+        window._import(_demo_session_files())
+
+        assert window._import_thread is first
+        assert window.statusBar().currentMessage() == ui_strings.STATUS_IMPORT_BUSY
+        assert _wait_until(lambda: window._import_thread is None)
+    finally:
+        window.close()
+
+
+def test_an_import_that_fails_is_reported_not_swallowed(qt_app, tmp_path, monkeypatch):
+    from lmu_telemetry.presentation.main_window import ImportWorker
+
+    monkeypatch.setenv(paths.ENV_DATA_DIR, str(tmp_path / "data"))
+    broken = tmp_path / "Not A Session_R_2026-01-01T00_00_00Z.duckdb"
+    broken.write_bytes(b"not a database")
+
+    results = []
+    worker = ImportWorker([broken])
+    worker.finished.connect(lambda imported, failures: results.append((imported, failures)))
+    worker.run()  # direct call: same code, no thread needed to check the outcome
+
+    assert results and results[0][0] == 0
+    assert len(results[0][1]) == 1 and broken.name in results[0][1][0]
+
+
 def test_session_pool_holds_two_files_and_evicts_the_third(qt_app):
     """A comparison against a pinned lap from another afternoon needs two files
     open. Beyond that, holding them open only leaks handles."""
-    from lmu_telemetry.ui.main_window import OpenSession, SessionPool
+    from lmu_telemetry.presentation.main_window import OpenSession, SessionPool
 
     class FakeSession:
         def __init__(self):
@@ -548,7 +640,7 @@ def test_comparison_mode_survives_having_nothing_to_compare(qt_app,
                                                             catalog_with_sessions):
     """Switching to a pinned comparison with nothing pinned must say so, not
     crash."""
-    from lmu_telemetry.ui.main_window import ComparisonMode, MainWindow
+    from lmu_telemetry.presentation.main_window import ComparisonMode, MainWindow
 
     window = MainWindow()
     try:
@@ -569,7 +661,7 @@ def test_time_axis_is_disabled_while_two_laps_are_drawn(qt_app,
                                                         catalog_with_sessions):
     """At equal elapsed times two laps are at different points of the circuit,
     so an overlay on that axis would invite a comparison that says nothing."""
-    from lmu_telemetry.ui.main_window import MainWindow
+    from lmu_telemetry.presentation.main_window import MainWindow
 
     window = MainWindow()
     try:
@@ -611,7 +703,7 @@ def make_square_path(n: int = 400):
 
 
 def test_runs_of_splits_a_class_array_into_maximal_runs():
-    from lmu_telemetry.ui.track_map import _runs_of
+    from lmu_telemetry.presentation.track_map import _runs_of
 
     assert _runs_of(np.array([1, 1, 0, 0, 0, -1])) == [
         (0, 2, 1), (2, 5, 0), (5, 6, -1),
@@ -623,7 +715,7 @@ def test_runs_of_splits_a_class_array_into_maximal_runs():
 def test_map_draws_one_polyline_per_colour_run(qt_app):
     """A 13 600-point lap as coloured points would be 13 600 items; as runs of
     constant colour it is a few hundred."""
-    from lmu_telemetry.ui.track_map import TrackMap
+    from lmu_telemetry.presentation.track_map import TrackMap
 
     x, y, grid = make_square_path()
     states = np.ones(len(x), dtype=np.int8)
@@ -639,7 +731,7 @@ def test_map_draws_one_polyline_per_colour_run(qt_app):
 def test_map_runs_overlap_by_one_point(qt_app):
     """Without the overlap the path shows a gap at every colour change, which
     on a pedal map is every braking point."""
-    from lmu_telemetry.ui.track_map import TrackMap
+    from lmu_telemetry.presentation.track_map import TrackMap
 
     x, y, grid = make_square_path()
     states = np.ones(len(x), dtype=np.int8)
@@ -655,7 +747,7 @@ def test_map_runs_overlap_by_one_point(qt_app):
 
 def test_map_falls_back_when_the_delta_colouring_has_no_data(qt_app):
     """The mode may have been left on delta by a lap that had a comparison."""
-    from lmu_telemetry.ui.track_map import MapColour, TrackMap
+    from lmu_telemetry.presentation.track_map import MapColour, TrackMap
 
     x, y, grid = make_square_path()
     states = np.ones(len(x), dtype=np.int8)
@@ -672,14 +764,14 @@ def test_map_falls_back_when_the_delta_colouring_has_no_data(qt_app):
 
 def test_map_keeps_the_circuit_s_aspect_ratio(qt_app):
     """A circuit stretched to fill the panel is not a circuit."""
-    from lmu_telemetry.ui.track_map import TrackMap
+    from lmu_telemetry.presentation.track_map import TrackMap
 
     track_map = TrackMap()
     assert track_map.plot.getViewBox().state["aspectLocked"] == 1
 
 
 def test_map_cursor_lands_on_the_path_at_a_given_distance(qt_app):
-    from lmu_telemetry.ui.track_map import TrackMap
+    from lmu_telemetry.presentation.track_map import TrackMap
 
     x, y, grid = make_square_path()
     track_map = TrackMap()
@@ -699,8 +791,8 @@ def test_map_cursor_lands_on_the_path_at_a_given_distance(qt_app):
 def test_gg_panel_draws_the_hull_it_reports(qt_app):
     """Outlining the hull is what makes the numbers under the plot auditable by
     eye rather than something the panel asserts."""
-    from lmu_telemetry.analysis import friction
-    from lmu_telemetry.ui.gg_panel import FrictionPanel
+    from lmu_telemetry.domain.analysis import friction
+    from lmu_telemetry.presentation.gg_panel import FrictionPanel
 
     rng = np.random.default_rng(3)
     angle = rng.uniform(0, 2 * np.pi, 500)
@@ -722,7 +814,7 @@ def test_gg_panel_draws_the_hull_it_reports(qt_app):
 def test_gg_panel_keeps_equal_axes(qt_app):
     """One g of braking must be as tall as one g of cornering, or a circular
     envelope reads as an elliptical one."""
-    from lmu_telemetry.ui.gg_panel import FrictionPanel
+    from lmu_telemetry.presentation.gg_panel import FrictionPanel
 
     panel = FrictionPanel()
     assert panel.plot.getViewBox().state["aspectLocked"] == 1
@@ -731,8 +823,8 @@ def test_gg_panel_keeps_equal_axes(qt_app):
 def test_gg_cursor_lands_on_the_lap_s_own_samples(qt_app):
     """The envelope drops low-speed samples, so it no longer lines up with the
     distance grid; the cursor has to index the unfiltered arrays."""
-    from lmu_telemetry.analysis import friction
-    from lmu_telemetry.ui.gg_panel import FrictionPanel
+    from lmu_telemetry.domain.analysis import friction
+    from lmu_telemetry.presentation.gg_panel import FrictionPanel
 
     grid = np.arange(0.0, 100.0)
     lateral = np.sin(grid / 10.0)
@@ -790,8 +882,8 @@ def test_setting_the_cursor_does_not_re_emit(qt_app):
 # --------------------------------------------------------------------------- #
 
 def make_corner_rows(n: int = 3, *, compared: bool = False, ideal: bool = False):
-    from lmu_telemetry.core.models import Corner
-    from lmu_telemetry.pipeline import CornerRow
+    from lmu_telemetry.domain.models import Corner
+    from lmu_telemetry.application.pipeline import CornerRow
 
     rows = []
     for index in range(n):
@@ -818,7 +910,7 @@ def make_corner_rows(n: int = 3, *, compared: bool = False, ideal: bool = False)
 
 
 def test_corner_table_hides_columns_that_have_nothing_to_say(qt_app):
-    from lmu_telemetry.ui.corner_table import (
+    from lmu_telemetry.presentation.corner_table import (
         COLUMN_DELTA, COLUMN_GAIN, _INDEX_OF, CornerTable,
     )
 
@@ -834,7 +926,7 @@ def test_corner_table_hides_columns_that_have_nothing_to_say(qt_app):
 
 
 def test_corner_table_converts_speeds_for_display(qt_app):
-    from lmu_telemetry.ui.corner_table import COLUMN_MIN_SPEED, _INDEX_OF, CornerTable
+    from lmu_telemetry.presentation.corner_table import COLUMN_MIN_SPEED, _INDEX_OF, CornerTable
 
     table = CornerTable()
     table.show_corners(make_corner_rows(1))
@@ -845,7 +937,7 @@ def test_corner_table_converts_speeds_for_display(qt_app):
 def test_filling_the_table_does_not_look_like_a_rename(qt_app):
     """Every cell written counts as an edit unless signals are suppressed, and
     a spurious rename would write a name the user never typed to the catalog."""
-    from lmu_telemetry.ui.corner_table import CornerTable
+    from lmu_telemetry.presentation.corner_table import CornerTable
 
     table = CornerTable()
     renames = []
@@ -857,7 +949,7 @@ def test_filling_the_table_does_not_look_like_a_rename(qt_app):
 
 def test_renaming_a_corner_reports_its_distance(qt_app):
     """The catalog anchors names to a distance, not a corner number."""
-    from lmu_telemetry.ui.corner_table import COLUMN_NAME, _INDEX_OF, CornerTable
+    from lmu_telemetry.presentation.corner_table import COLUMN_NAME, _INDEX_OF, CornerTable
 
     table = CornerTable()
     renames = []
@@ -869,10 +961,26 @@ def test_renaming_a_corner_reports_its_distance(qt_app):
     assert renames == [(1, 2000.0, "Lesmo 1")]
 
 
+def test_renaming_from_another_lap_replaces_the_name_instead_of_adding_one(qt_app):
+    """The same corner's apex sits a metre or two elsewhere on another lap. An
+    exact-distance match would keep the old reference and leave two names
+    competing for one corner."""
+    from lmu_telemetry.presentation.main_window import OpenSession
+
+    opened = OpenSession("s", session=None, track_length_m=None)
+    opened.corner_references = [(900.0, "Turn 1"), (2400.0, "Lesmo 1")]
+
+    opened.rename_corner(903.0, "Primeira")
+
+    assert sorted(opened.corner_references) == [
+        (903.0, "Primeira"), (2400.0, "Lesmo 1"),
+    ]
+
+
 def test_corner_table_marks_the_corner_worth_the_most(qt_app):
     """With the ideal lap on, that single cell is the answer to "what do I
     practise next"."""
-    from lmu_telemetry.ui.corner_table import COLUMN_GAIN, _INDEX_OF, CornerTable
+    from lmu_telemetry.presentation.corner_table import COLUMN_GAIN, _INDEX_OF, CornerTable
 
     table = CornerTable()
     table.show_corners(make_corner_rows(3, ideal=True), show_ideal=True)
@@ -887,7 +995,7 @@ def test_corner_table_marks_the_corner_worth_the_most(qt_app):
 
 def test_following_the_cursor_does_not_move_it_back(qt_app):
     """The table drives the cursor and the cursor drives the table."""
-    from lmu_telemetry.ui.corner_table import CornerTable
+    from lmu_telemetry.presentation.corner_table import CornerTable
 
     table = CornerTable()
     table.show_corners(make_corner_rows(3))
@@ -929,7 +1037,7 @@ def test_zoom_to_a_corner_leaves_room_either_side(qt_app):
 # --------------------------------------------------------------------------- #
 
 def make_report(*, drift: bool = False, excluded: bool = False):
-    from lmu_telemetry.analysis.consistency import (
+    from lmu_telemetry.domain.analysis.consistency import (
         ConsistencyReport, CornerConsistency, ExcludedLap, Exclusion,
     )
 
@@ -970,7 +1078,7 @@ def make_report(*, drift: bool = False, excluded: bool = False):
 def test_consistency_opens_on_the_worst_corner(qt_app):
     """The ranking is the deliverable; leaving the plot empty until the user
     clicks wastes the answer."""
-    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+    from lmu_telemetry.presentation.consistency_panel import ConsistencyPanel
 
     panel = ConsistencyPanel()
     panel.show_report(make_report(), [2, 3, 4, 8, 9])
@@ -983,7 +1091,7 @@ def test_consistency_opens_on_the_worst_corner(qt_app):
 
 def test_consistency_plot_is_indexed_by_lap_number(qt_app):
     """A point on the chart has to be attributable to a lap in the tree."""
-    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+    from lmu_telemetry.presentation.consistency_panel import ConsistencyPanel
 
     panel = ConsistencyPanel()
     panel.show_report(make_report(), [2, 3, 4, 8, 9])
@@ -995,7 +1103,7 @@ def test_consistency_plot_is_indexed_by_lap_number(qt_app):
 def test_consistency_plot_drops_gaps_rather_than_zeroing_them(qt_app):
     """A lap that never braked here has no braking point, and plotting it at
     zero would invent an outlier."""
-    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+    from lmu_telemetry.presentation.consistency_panel import ConsistencyPanel
 
     panel = ConsistencyPanel()
     panel.show_report(make_report(), [2, 3, 4, 8, 9])
@@ -1010,7 +1118,7 @@ def test_consistency_plot_drops_gaps_rather_than_zeroing_them(qt_app):
 def test_consistency_names_the_pattern(qt_app):
     """A drift and a scatter have the same standard deviation and completely
     different causes."""
-    from lmu_telemetry.ui.consistency_panel import COLUMN_PATTERN, ConsistencyPanel
+    from lmu_telemetry.presentation.consistency_panel import COLUMN_PATTERN, ConsistencyPanel
 
     panel = ConsistencyPanel()
     panel.show_report(make_report(drift=True), [2, 3, 4, 8, 9])
@@ -1025,7 +1133,7 @@ def test_consistency_names_the_pattern(qt_app):
 def test_consistency_words_the_exclusions(qt_app):
     """The analysis layer returns a code; this is the only place that turns it
     into a sentence."""
-    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+    from lmu_telemetry.presentation.consistency_panel import ConsistencyPanel
 
     panel = ConsistencyPanel()
     panel.show_report(make_report(excluded=True), [2, 3, 4, 8, 9])
@@ -1037,8 +1145,8 @@ def test_consistency_words_the_exclusions(qt_app):
 
 def test_consistency_needs_enough_laps(qt_app):
     """Dispersion measured over one lap is not dispersion."""
-    from lmu_telemetry.analysis.consistency import ConsistencyReport
-    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+    from lmu_telemetry.domain.analysis.consistency import ConsistencyReport
+    from lmu_telemetry.presentation.consistency_panel import ConsistencyPanel
 
     panel = ConsistencyPanel()
     panel.show_report(
@@ -1050,7 +1158,7 @@ def test_consistency_needs_enough_laps(qt_app):
 
 
 def test_selecting_a_corner_moves_the_shared_cursor(qt_app):
-    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+    from lmu_telemetry.presentation.consistency_panel import ConsistencyPanel
 
     panel = ConsistencyPanel()
     moved = []
@@ -1064,8 +1172,8 @@ def test_selecting_a_corner_moves_the_shared_cursor(qt_app):
 def test_stint_selector_hides_itself_when_there_is_one_stint(qt_app):
     """A session driven without stopping is one stint, and a selector with one
     entry is furniture."""
-    from lmu_telemetry.pipeline import StintAnalysis
-    from lmu_telemetry.ui.consistency_panel import ConsistencyPanel
+    from lmu_telemetry.application.pipeline import StintAnalysis
+    from lmu_telemetry.presentation.consistency_panel import ConsistencyPanel
 
     panel = ConsistencyPanel()
     panel.show_stints([StintAnalysis(0, (2, 3, 4, 8, 9), make_report())])
@@ -1085,7 +1193,7 @@ def test_stint_selector_hides_itself_when_there_is_one_stint(qt_app):
 
 def test_export_refuses_when_nothing_is_loaded(qt_app, catalog_with_sessions):
     """No telemetry file exists behind this catalog, so nothing is drawn."""
-    from lmu_telemetry.ui.main_window import MainWindow
+    from lmu_telemetry.presentation.main_window import MainWindow
 
     window = MainWindow()
     try:
@@ -1097,8 +1205,8 @@ def test_export_refuses_when_nothing_is_loaded(qt_app, catalog_with_sessions):
 
 
 def test_suggested_file_name_says_what_is_in_it(qt_app, catalog_with_sessions):
-    from lmu_telemetry.ui.main_window import CurrentView, MainWindow
-    from lmu_telemetry.ui.session_browser import LapSelection
+    from lmu_telemetry.presentation.main_window import CurrentView, MainWindow
+    from lmu_telemetry.presentation.session_browser import LapSelection
 
     window = MainWindow()
     try:
@@ -1119,7 +1227,7 @@ def test_suggested_file_name_says_what_is_in_it(qt_app, catalog_with_sessions):
 def test_export_dialects_follow_the_chosen_filter(qt_app):
     """A standard CSV shows a Portuguese-locale Excel one column of garbage, so
     the file dialog offers both and the choice has to reach the writer."""
-    from lmu_telemetry.export import tables
+    from lmu_telemetry.infrastructure.export import tables
 
     assert strings.DIALOG_CSV_FILTER_EXCEL in strings.DIALOG_CSV_FILTER
     assert tables.EXCEL_PT_BR.delimiter == ";"

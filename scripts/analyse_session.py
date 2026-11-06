@@ -20,12 +20,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np  # noqa: E402
 
-from lmu_telemetry import pipeline  # noqa: E402
-from lmu_telemetry.analysis import delta, ideal_lap as ideal_lap_module, trackmap  # noqa: E402
-from lmu_telemetry.core.errors import TelemetryError  # noqa: E402
-from lmu_telemetry.ingest.session_loader import load_session  # noqa: E402
-from lmu_telemetry.logging_config import get_logger, setup_logging  # noqa: E402
-from lmu_telemetry.storage import catalog  # noqa: E402
+from lmu_telemetry.application import pipeline  # noqa: E402
+from lmu_telemetry.domain.analysis import delta, ideal_lap as ideal_lap_module, trackmap  # noqa: E402
+from lmu_telemetry.shared.errors import TelemetryError  # noqa: E402
+from lmu_telemetry.infrastructure.ingest.session_loader import load_session  # noqa: E402
+from lmu_telemetry.shared.logging_config import get_logger, setup_logging  # noqa: E402
+from lmu_telemetry.infrastructure.storage import catalog  # noqa: E402
 
 logger = get_logger(__name__)
 WIDTH = 92
@@ -204,7 +204,7 @@ def report_friction(session_analysis: pipeline.SessionAnalysis) -> None:
     emit(f"  Área da envoltória         : {envelope.hull_area_g2:6.2f} g²")
     emit(f"  Preenchimento da envoltória: {envelope.fill_fraction:6.1%}")
 
-    from lmu_telemetry.analysis import friction as friction_module
+    from lmu_telemetry.domain.analysis import friction as friction_module
     blend = friction_module.transition_quality(
         envelope.lateral_g, envelope.longitudinal_g
     )

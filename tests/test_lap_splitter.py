@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lmu_telemetry.core.models import Lap, LapFlag
-from lmu_telemetry.ingest import lap_splitter
-from lmu_telemetry.ingest.events import EventSeries
+from lmu_telemetry.domain.models import Lap, LapFlag
+from lmu_telemetry.infrastructure.ingest import lap_splitter
+from lmu_telemetry.infrastructure.ingest.events import EventSeries
 
 
 def make_lap(**overrides) -> Lap:

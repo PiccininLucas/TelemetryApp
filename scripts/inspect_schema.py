@@ -40,12 +40,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import duckdb  # noqa: E402
 import numpy as np  # noqa: E402
 
-from lmu_telemetry.core import models, units  # noqa: E402
-from lmu_telemetry.core.errors import TelemetryError  # noqa: E402
-from lmu_telemetry.ingest import channel_registry, duckdb_reader  # noqa: E402
-from lmu_telemetry.ingest.channel_registry import ChannelFormat  # noqa: E402
-from lmu_telemetry.logging_config import get_logger, setup_logging  # noqa: E402
-from lmu_telemetry.ui import strings  # noqa: E402
+from lmu_telemetry.domain import models, units  # noqa: E402
+from lmu_telemetry.shared.errors import TelemetryError  # noqa: E402
+from lmu_telemetry.infrastructure.ingest import channel_registry, duckdb_reader  # noqa: E402
+from lmu_telemetry.infrastructure.ingest.channel_registry import ChannelFormat  # noqa: E402
+from lmu_telemetry.shared.logging_config import get_logger, setup_logging  # noqa: E402
+from lmu_telemetry.shared import strings  # noqa: E402
 from scripts import expected_schema  # noqa: E402
 
 logger = get_logger(__name__)
@@ -253,7 +253,7 @@ def report_coherence(
     else:
         emit(f"  {strings.INSPECT_ALL_TABLES_IN_CATALOG}")
 
-    # Distinct units and frequencies. The units drive core/units.py, so knowing
+    # Distinct units and frequencies. The units drive domain/units.py, so knowing
     # exactly which spellings appear is what stops that module from guessing.
     # Both catalogs are scanned: eventsList declares units the channel catalog
     # never uses (e.g. "On/Off"), and an unrecognised one there would warn just
@@ -310,7 +310,7 @@ def report_time_base(
 
     Second, against a real clock: `GPS Time` is a continuous channel carrying an
     actual timestamp. Its span must match the duration implied by its own row
-    count and frequency. This is the same comparison `ingest/time_base.py` will
+    count and frequency. This is the same comparison `infrastructure/ingest/time_base.py` will
     do sample by sample in phase 2 - here it is only a coarse go/no-go.
     """
     header(strings.INSPECT_SECTION_TIMEBASE)
