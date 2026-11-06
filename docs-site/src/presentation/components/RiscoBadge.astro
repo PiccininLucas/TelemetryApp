@@ -1,0 +1,12 @@
+---
+import { ROTULO_RISCO, type Risco } from "../../domain/etapa";
+
+interface Props { risco: Risco; }
+const { risco } = Astro.props;
+const tom: Record<Risco, string> = {
+  baixo: "bg-ok/15 text-ok",
+  medio: "bg-warn/15 text-warn",
+  alto: "bg-danger/15 text-danger",
+};
+---
+<span class:list={["inline-flex items-center rounded-md px-2 py-1 text-xs font-medium", tom[risco]]}>{ROTULO_RISCO[risco]}</span>

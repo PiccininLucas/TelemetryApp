@@ -1,0 +1,40 @@
+---
+import BaseLayout from "../presentation/layouts/BaseLayout.astro";
+import { documentacao } from "../composition";
+
+const grupos = documentacao.listarGruposDeTokens();
+---
+<BaseLayout titulo="Tokens de design" descricao="Cores e constantes do tema escuro atual do app, definidas em theme.py.">
+  <h1 class="text-2xl font-semibold">Tokens de design</h1>
+  <p class="mt-3 max-w-3xl leading-7 text-muted">
+    Valores atuais de <code>lmu_telemetry/presentation/theme.py</code>. A etapa 1 propõe estruturá-los em camadas
+    (marca e semântica) e eliminar as cores fora do tema.
+  </p>
+
+  {grupos.map((g) => (
+    <section class="mt-8" aria-labelledby={`g-${g.nome}`}>
+      <h2 id={`g-${g.nome}`} class="text-lg font-semibold">{g.nome}</h2>
+      <ul class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {g.tokens.map((t) => (
+          <li class="flex items-center gap-3 rounded-lg border border-line bg-surface p-3">
+            <span class="h-10 w-10 shrink-0 rounded border border-line" style={`background:${t.hex}`} aria-hidden="true"></span>
+            <span>
+              <span class="block font-mono text-xs">{t.nome}</span>
+              <span class="block text-sm text-muted">{t.hex}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ))}
+
+  <section class="mt-8" aria-labelledby="g-const">
+    <h2 id="g-const" class="text-lg font-semibold">Constantes de gráfico</h2>
+    <ul class="mt-3 list-disc space-y-1 pl-6 leading-7">
+      <li><code>GRID_ALPHA</code> = 0,15</li>
+      <li><code>AXIS_WIDTH</code> = 62 px — fixa a margem esquerda dos gráficos empilhados para manter o alinhamento vertical.</li>
+      <li>Antialiasing desligado no pyqtgraph por desempenho (traçados com centenas de milhares de pontos).</li>
+      <li>Par referência/comparação (azul/laranja) escolhido para daltonismo; vermelho/verde só no preenchimento do delta, que também é indicado pelo lado do zero.</li>
+    </ul>
+  </section>
+</BaseLayout>

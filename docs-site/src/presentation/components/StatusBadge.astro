@@ -1,0 +1,12 @@
+---
+import { ROTULO_STATUS, type Status } from "../../domain/etapa";
+
+interface Props { status: Status; }
+const { status } = Astro.props;
+const tom: Record<Status, string> = {
+  pendente: "bg-raised text-muted",
+  "em-andamento": "bg-warn/15 text-warn",
+  concluida: "bg-ok/15 text-ok",
+};
+---
+<span class:list={["inline-flex items-center rounded-md px-2 py-1 text-xs font-medium", tom[status]]}>{ROTULO_STATUS[status]}</span>

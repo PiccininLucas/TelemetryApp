@@ -1,0 +1,40 @@
+---
+import BaseLayout from "../../presentation/layouts/BaseLayout.astro";
+import StatusBadge from "../../presentation/components/StatusBadge.astro";
+import RiscoBadge from "../../presentation/components/RiscoBadge.astro";
+import { etapas } from "../../composition";
+import { renderEtapa } from "../../infrastructure/content/renderEtapa";
+
+export async function getStaticPaths() {
+  const itens = await etapas.listarEtapasComVizinhas();
+  return itens.map((item) => ({ params: { id: item.etapa.id }, props: item }));
+}
+
+const { etapa, anterior, proxima } = Astro.props;
+const { Content } = await renderEtapa(etapa.id);
+---
+<BaseLayout titulo={etapa.titulo} descricao={etapa.resumo}>
+  <p class="text-sm text-muted">Etapa {etapa.ordem}</p>
+  <h1 class="mt-1 text-2xl font-semibold">{etapa.titulo}</h1>
+  <div class="mt-3 flex flex-wrap gap-2">
+    <StatusBadge status={etapa.status} />
+    <RiscoBadge risco={etapa.risco} />
+  </div>
+  <p class="mt-4 max-w-3xl leading-7 text-muted">{etapa.resumo}</p>
+
+  {etapa.arquivos.length > 0 && (
+    <section aria-labelledby="arq" class="mt-6 rounded-lg border border-line bg-surface p-4">
+      <h2 id="arq" class="text-sm font-semibold text-muted">Arquivos afetados</h2>
+      <ul class="mt-2 space-y-1 font-mono text-sm">
+        {etapa.arquivos.map((a) => <li>{a}</li>)}
+      </ul>
+    </section>
+  )}
+
+  <article class="prose-doc mt-4 max-w-3xl"><Content /></article>
+
+  <nav aria-label="Etapas" class="mt-10 flex justify-between gap-4 border-t border-line pt-4 text-sm">
+    {anterior ? <a class="text-accent hover:underline" href={`/etapas/${anterior.id}/`}>← {anterior.titulo}</a> : <span />}
+    {proxima ? <a class="text-accent hover:underline" href={`/etapas/${proxima.id}/`}>{proxima.titulo} →</a> : <span />}
+  </nav>
+</BaseLayout>

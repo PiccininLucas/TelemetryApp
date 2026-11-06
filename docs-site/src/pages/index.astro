@@ -1,0 +1,43 @@
+---
+import BaseLayout from "../presentation/layouts/BaseLayout.astro";
+import StatusBadge from "../presentation/components/StatusBadge.astro";
+import RiscoBadge from "../presentation/components/RiscoBadge.astro";
+import { etapas } from "../composition";
+
+const lista = await etapas.listarEtapas();
+const { concluidas, total } = await etapas.obterProgresso();
+---
+<BaseLayout titulo="Visão geral" descricao="Plano de remodelagem do front-end do LMU Telemetry Analyzer, dividido em etapas.">
+  <h1 class="text-2xl font-semibold">Remodelagem do front-end</h1>
+  <p class="mt-3 max-w-3xl leading-7 text-muted">
+    Plano em etapas para remodelar a interface do LMU Telemetry Analyzer (PySide6 + pyqtgraph).
+    Cada etapa tem escopo, arquivos afetados, critério de pronto e decisões em aberto — os ajustes
+    são feitos sobre este documento antes de mexer no código.
+  </p>
+
+  <section aria-labelledby="princ" class="mt-8">
+    <h2 id="princ" class="text-lg font-semibold">O que não muda</h2>
+    <ul class="mt-3 list-disc space-y-1 pl-6 leading-7">
+      <li>Os contratos de sinais entre painéis (cursor compartilhado) e o <code>application/pipeline.py</code>.</li>
+      <li><code>shared/strings.py</code> como fonte única de texto da interface (em português).</li>
+      <li>A regra de camadas verificada em <code>tests/test_architecture.py</code>: <code>domain</code> e <code>application</code> não importam Qt nem DuckDB.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="lista" class="mt-8">
+    <h2 id="lista" class="text-lg font-semibold">Etapas <span class="text-sm font-normal text-muted">({concluidas} de {total} concluídas)</span></h2>
+    <ol class="mt-4 space-y-3">
+      {lista.map((e) => (
+        <li class="rounded-lg border border-line bg-surface p-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-sm text-muted">Etapa {e.ordem}</span>
+            <StatusBadge status={e.status} />
+            <RiscoBadge risco={e.risco} />
+          </div>
+          <h3 class="mt-2 font-semibold"><a class="hover:text-accent hover:underline" href={`/etapas/${e.id}/`}>{e.titulo}</a></h3>
+          <p class="mt-1 text-sm text-muted">{e.resumo}</p>
+        </li>
+      ))}
+    </ol>
+  </section>
+</BaseLayout>
