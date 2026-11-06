@@ -70,10 +70,6 @@ class SessionBrowser(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        heading = QtWidgets.QLabel(strings.BROWSER_TITLE)
-        heading.setProperty("role", "heading")
-        layout.addWidget(heading)
-
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setColumnCount(3)
         self.tree.setHeaderLabels([
