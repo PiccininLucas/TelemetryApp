@@ -31,7 +31,7 @@ from enum import Enum
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from lmu_telemetry.shared import strings
 from lmu_telemetry.presentation import theme
@@ -93,6 +93,8 @@ class TrackMap(QtWidgets.QWidget):
         self._grid_m: np.ndarray | None = None
         self._classes: dict[MapColour, np.ndarray] = {}
         self._runs: list[pg.PlotDataItem] = []
+        self._corner_marks: list[tuple[float, str]] = []
+        self._corner_items: list[pg.TextItem] = []
         self._build()
 
     def _build(self) -> None:
@@ -123,6 +125,13 @@ class TrackMap(QtWidgets.QWidget):
             brush=pg.mkBrush(theme.TEXT),
         )
         self.plot.addItem(self._start)
+
+        # Corner apexes: a small dot and the corner's number, so a point on the
+        # map can be named without reading a distance off an axis.
+        self._apexes = pg.ScatterPlotItem(
+            size=5, pen=pg.mkPen(None), brush=pg.mkBrush(theme.TEXT_MUTED),
+        )
+        self.plot.addItem(self._apexes)
 
         self._cursor = pg.ScatterPlotItem(
             size=11, pen=pg.mkPen(theme.TEXT, width=2),
@@ -203,6 +212,48 @@ class TrackMap(QtWidgets.QWidget):
         """
         self._integrated.setData(np.asarray(x_m), np.asarray(y_m))
 
+    def set_corner_labels(self, distances_m, labels) -> None:
+        """Name the corners on the map, at their apexes.
+
+        Labels should be short - "T6", not "T6 Hairpin" - because sixteen full
+        names on a map the size of a dock are unreadable; the full name is in
+        the corner card and the table.
+        """
+        self._corner_marks = list(zip(
+            (float(d) for d in distances_m), labels, strict=True
+        ))
+        self._draw_corner_labels()
+
+    @property
+    def corner_labels(self) -> list[str]:
+        """The labels currently drawn, for tests."""
+        return [item.textItem.toPlainText() for item in self._corner_items]
+
+    def _draw_corner_labels(self) -> None:
+        for item in self._corner_items:
+            self.plot.removeItem(item)
+        self._corner_items = []
+        self._apexes.setData([], [])
+        if self._x is None or self._grid_m is None or not len(self._x):
+            return
+        if not self._corner_marks:
+            return
+
+        distances = np.array([d for d, _label in self._corner_marks])
+        xs = np.interp(distances, self._grid_m, self._x)
+        ys = np.interp(distances, self._grid_m, self._y)
+        self._apexes.setData(xs, ys)
+        # Smaller than the interface text: on a tight complex - Fuji's Dunlop,
+        # Le Mans's Ford chicanes - four labels sit within a few pixels.
+        font = QtGui.QFont()
+        font.setPointSizeF(max(font.pointSizeF() - 1.5, 7.0))
+        for x, y, (_distance, label) in zip(xs, ys, self._corner_marks, strict=True):
+            text = pg.TextItem(label, color=theme.TEXT_MUTED, anchor=(0.5, 1.3))
+            text.setFont(font)
+            text.setPos(float(x), float(y))
+            self.plot.addItem(text, ignoreBounds=True)
+            self._corner_items.append(text)
+
     def set_integrated_visible(self, visible: bool) -> None:
         self._integrated.setVisible(visible)
 
@@ -210,6 +261,8 @@ class TrackMap(QtWidgets.QWidget):
         self._x = self._y = self._grid_m = None
         self._classes = {}
         self._clear_runs()
+        self._corner_marks = []
+        self._draw_corner_labels()
         self._integrated.setData([], [])
         self._start.setData([], [])
         self._cursor.setVisible(False)
@@ -265,6 +318,7 @@ class TrackMap(QtWidgets.QWidget):
                 ))
 
         self._start.setData([self._x[0]], [self._y[0]])
+        self._draw_corner_labels()
         self._update_legend()
         self.plot.enableAutoRange()
 

@@ -31,7 +31,7 @@ from lmu_telemetry.domain.analysis import (
 from lmu_telemetry.domain.analysis.corners import CornerDetectionSettings
 from lmu_telemetry.shared.config import Config, load_config
 from lmu_telemetry.domain.models import Corner, Lap, LapFlag
-from lmu_telemetry.domain import resampling
+from lmu_telemetry.domain import official_tracks, resampling
 from lmu_telemetry.application.ports import SessionData
 from lmu_telemetry.shared.logging_config import get_logger
 
@@ -181,7 +181,8 @@ def analyse_lap(
 
     lateral, longitudinal = _accelerations_on(session, times, reconstruction, grid_m)
 
-    detected = corners.detect_corners(
+    detected = _detect_corners(
+        session,
         on_distance["Ground Speed"],
         grid_m,
         on_distance.get("Brake Pos", np.zeros_like(grid_m)),
@@ -199,6 +200,50 @@ def analyse_lap(
         lateral_g=lateral,
         longitudinal_g=longitudinal,
     )
+
+
+def _track_name_of(session: SessionData) -> str | None:
+    """The game's name for the session's circuit, when the session knows it.
+
+    Read from `session.info` rather than threaded through every caller, so the
+    interface, the scripts and the export all see the same corners. A session
+    without an `info` - the synthetic ones the tests build - has no circuit, and
+    simply gets the speed-based detector.
+    """
+    return getattr(getattr(session, "info", None), "track_name", None)
+
+
+def _detect_corners(
+    session: SessionData,
+    speed_ms: np.ndarray,
+    grid_m: np.ndarray,
+    brake: np.ndarray,
+    throttle: np.ndarray,
+    settings: CornerDetectionSettings,
+) -> list[Corner]:
+    """The lap's corners: the circuit's official turns when they are known.
+
+    A circuit whose every turn has been placed on a lap (`is_calibrated`) is
+    measured turn by turn, numbered as on the track map, so a flat-out kink is
+    T7 rather than missing and the table agrees with the circuit's own signs.
+    Anything else - an unknown circuit, or one the wiki describes but nobody has
+    yet measured against a lap - falls back to finding corners from the speed
+    trace alone. A partly placed circuit is deliberately not used: half a
+    numbering would label some corners "T6" and leave their neighbours "C4".
+    """
+    official = official_tracks.find_track(_track_name_of(session))
+    if (
+        official is not None
+        and official.is_calibrated
+        and grid_m.size
+        and official.fits_lap(float(grid_m[-1]))
+    ):
+        measured = corners.corners_at_anchors(
+            speed_ms, grid_m, brake, throttle, official.anchors, settings
+        )
+        if measured:
+            return measured
+    return corners.detect_corners(speed_ms, grid_m, brake, throttle, settings)
 
 
 def _lap_time_grid(session: SessionData, lap: Lap, config: Config) -> np.ndarray:

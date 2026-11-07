@@ -27,6 +27,9 @@ arquivos:
 - Nome de curva editável persiste no catálogo.
 - Corte de aviso vindo da configuração (`ui.consistency.*`).
 
-## Decisões em aberto
+## Decisões (07/11/2026)
 
-- Tabela e consistência continuam como abas ou passam a ser painéis lado a lado?
+- Tabela e consistência passam a ser **painéis lado a lado** (docks `dock_corners` e
+  `dock_consistency`), com o cartão da curva selecionada entre os dois.
+- A coluna de nome da tabela de curvas deixou de esticar: todas as colunas têm a largura do
+  conteúdo e a sobra vai para a última, para as medidas não saírem da área visível.

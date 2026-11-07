@@ -75,7 +75,7 @@ def report_corners(analysis: pipeline.LapAnalysis) -> None:
         emit("  Nenhuma curva detectada.")
         return
 
-    emit(f"  {'curva':<7}{'ápice':>9}{'v_mín':>9}{'v_entr':>9}{'frenagem':>10}"
+    emit(f"  {'curva':<24}{'ápice':>9}{'v_mín':>9}{'v_entr':>9}{'frenagem':>10}"
          f"{'dist.fren':>11}{'retomada':>10}{'coast':>8}{'trail':>8}")
     emit(f"  {'-' * (WIDTH - 4)}")
     for corner in analysis.corners:
@@ -88,7 +88,7 @@ def report_corners(analysis: pipeline.LapAnalysis) -> None:
         throttle = (f"{corner.throttle_distance_m:10.0f}"
                     if corner.throttle_distance_m is not None else "       n/d")
         emit(
-            f"  {corner.label:<7}{corner.apex_distance_m:9.0f}"
+            f"  {corner.label:<24}{corner.apex_distance_m:9.0f}"
             f"{corner.minimum_speed_ms * 3.6:9.1f}{entry}{braking}{braking_length}"
             f"{throttle}{corner.coasting_time_s:8.2f}{corner.trail_braking_m:8.0f}"
         )
@@ -171,12 +171,12 @@ def report_consistency(session_analysis: pipeline.SessionAnalysis) -> None:
              + ", ".join(f"{i} ({why})"
                          for i, why in report.excluded_lap_indices.items()))
     emit()
-    emit(f"  {'curva':<7}{'ápice':>8}{'n':>4}{'σ frenagem':>12}{'σ v_mín':>10}"
+    emit(f"  {"curva":<24}{'ápice':>8}{'n':>4}{'σ frenagem':>12}{'σ v_mín':>10}"
          f"{'σ retomada':>12}{'perda est.':>12}  tendência")
     emit(f"  {'-' * (WIDTH - 4)}")
     for corner in report.corners:
         emit(
-            f"  {corner.corner_label:<7}{corner.apex_distance_m:8.0f}"
+            f"  {corner.corner_label:<24}{corner.apex_distance_m:8.0f}"
             f"{corner.n_laps:4d}{corner.braking_point_std_m:11.1f} m"
             f"{corner.minimum_speed_std_kmh:9.2f} "
             f"{corner.throttle_point_std_m:11.1f} "

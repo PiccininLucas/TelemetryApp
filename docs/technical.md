@@ -115,6 +115,7 @@ lmu_telemetry/
     models.py                 SessionInfo, Lap, LapFlag, Corner, Stint, filename parser, SHA-256
     units.py                  unit conversion driven by the file's own `unit` column
     records.py                SessionRow, LapRow, CornerReference (catalog rows)
+    official_tracks.py        official turn numbers/names per LMU circuit (LMU wiki), `find_track`
     resampling.py             resample_to_grid, step_interpolate (pure numpy)
     analysis/                 numpy in, numbers out
       distance.py  resample.py  delta.py  corners.py  ideal_lap.py
@@ -139,7 +140,8 @@ lmu_telemetry/
     export/                   charts.py (matplotlib), tables.py (CSV), report.py (PDF), anonymise.py
   presentation/             PySide6
     main_window, session_state, import_worker, session_browser, chart_panel,
-    track_map, gg_panel, corner_table, consistency_panel, theme
+    track_map, gg_panel, corner_table, consistency_panel, theme,
+    session_header, lap_list, corner_detail
 scripts/                    CLI tools (section 2)
 tests/                      pytest suite + synthetic data builders
 data/demo/                  one anonymised session, the only .duckdb tracked in git
@@ -330,7 +332,8 @@ lap window (t_start..t_end)
        (refused if scale outside [0.9, 1.1] → raw integral kept)
   → resample everything onto a 1 m distance grid       resample.resample
   → elapsed_time(distance) , lateral/longitudinal g    delta.elapsed_time, _accelerations_on
-  → corners.detect_corners(speed, brake, throttle)
+  → corners: official turns (corners_at_anchors) when the circuit is known and
+    calibrated, else corners.detect_corners(speed, brake, throttle)
   → LapAnalysis
 ```
 
@@ -366,6 +369,22 @@ Frozen, slotted dataclasses are the result type everywhere
 (`DistanceReconstruction`, `DeltaResult`, `IdealLap`, `Segment`,
 `ConsistencyReport`, `FrictionEnvelope`, `TrackPath`, …). `Corner` lives in
 `domain/models.py` because both `analysis` and the UI need it.
+
+Official turns (`official_tracks.py`, `corners.corners_at_anchors`): the speed-based
+detector cannot see a turn taken flat out (Fuji has 16 turns, the detector finds 7).
+For a circuit in `official_tracks.TRACKS` whose listed turns all have an `anchor_m`
+(distance of the apex from the line) and whose length matches the lap
+(`OfficialTrack.fits_lap`, 5 %), `pipeline._detect_corners` measures one corner per turn
+and labels it `T<n> <name>`. Numbers and names come from the LMU wiki Track Guides;
+where the wiki is silent the field is `None`, never a guess. The wiki gives no
+distances, so anchors were read off a recorded lap's GPS heading and cross-checked on
+other sessions: every speed minimum the old detector finds lies within ~45 m of an
+anchor. Calibrated: Fuji, Monza, Spa, Le Mans, COTA, Interlagos, Portimão, Bahrain
+(5.4 km layout only), Imola. Not calibrated, so they keep the speed-based `C<n>`
+corners: Silverstone (no session with a complete lap), Sebring, Paul Ricard, Qatar.
+Confidence is lowest for turns taken flat out in a continuous arc (Imola 1/8/10/13/16/19,
+Interlagos 9/10 and 13-15, the COTA esses). A user's own corner name (catalog, by
+distance) still overrides the official label.
 
 Corner measurements (`Corner`): apex distance, minimum speed, entry speed and
 braking point (start of the last sustained brake run before the apex), throttle resumption,
@@ -426,31 +445,58 @@ going past a bad file, returning `(results, failures)`.
 
 ### Window composition (`MainWindow`)
 
-The traces are the window's centre; everything else is a `QDockWidget`, so each
-panel can be hidden, moved, tabbed with another or floated.
+A summary strip across the top, the traces in the centre, and everything else a
+`QDockWidget`, so each panel can be hidden, moved, tabbed with another or floated.
 
 ```
 ┌ menu bar ──────────────────────────────────────────────────────────────────────┐
 ├ toolbar: import · refresh │ comparison · pin │ axis │ export PNG · PDF ─────────┤
+├ toolbar_header (SessionHeader): track · car │ lap · reference · Δ │ S1 S2 S3 │  ┤
+│                                  best of session · ideal lap                   │
 ├────────────────┬─────────────────────────────────────┬─────────────────────────┤
-│ dock_sessions  │ warning banner (amber)              │ dock_map   (TrackMap)   │
-│ SessionBrowser │ ChartStack (centre widget)          ├─────────────────────────┤
-│ track▸car▸     ├─────────────────────────────────────┤ dock_gg    (g-g)        │
-│ session▸lap    │ dock_corners: CornerTable |         │                         │
-│                │               ConsistencyPanel      │                         │
-├────────────────┴─────────────────────────────────────┴─────────────────────────┤
+│ dock_sessions  │ warning banner (amber)              │ dock_map   (TrackMap,   │
+│ SessionBrowser │ ChartStack (centre widget)          │   corners T1..Tn)       │
+├────────────────┤                                     ├─────────────────────────┤
+│ dock_laps      │                                     │ dock_gg    (g-g)        │
+│ LapList        │                                     │                         │
+├────────────────┴──────────────┬──────────────────┬───┴─────────────────────────┤
+│ dock_corners (CornerTable)    │ dock_detail      │ dock_consistency            │
+│                               │ (CornerDetail)   │ (ConsistencyPanel)          │
+├───────────────────────────────┴──────────────────┴─────────────────────────────┤
 │ status bar                                                                     │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The side docks run the full height (`setCorner`), so the corner tables sit under
-the traces they are read against. The arrangement is saved to `QSettings` when the
-window closes and restored on the next run; `Painéis ▸ Restaurar layout padrão`
-(`MainWindow.reset_layout`) puts everything back. A saved state is applied only if
-it was written under the current `LAYOUT_STATE_VERSION` and `restoreState`
-accepts it; otherwise the default is used. Bump the version when a dock is added,
-removed or renamed — the dock object names (`dock_sessions`, `dock_corners`,
-`dock_map`, `dock_gg`) are what saved layouts are keyed on.
+- **`SessionHeader`** (`session_header.py`) — a non-movable toolbar on its own row
+  (`addToolBarBreak`), so it spans the window above the side columns. Fed a
+  `SessionSummary` the window assembles in `_session_summary`. Session-best sectors
+  are drawn in `TRACE_IDEAL`; the delta is green/red *and* signed. Its figures sit
+  in a horizontal `QScrollArea`, so the header never sets the window's minimum width.
+- **`LapList`** (`lap_list.py`) — every lap of the open session in driving order:
+  time, S1–S3, gap to the best, status. Best lap and best sectors are computed among
+  **comparable** laps only (`best_lap`, `best_sectors`); non-comparable laps are
+  listed but dimmed; the reference lap is tagged `ref`. Picking a row calls
+  `SessionBrowser.select_lap`, so a lap is always opened through the tree and the
+  two never disagree.
+- **`CornerDetail`** (`corner_detail.py`) — the corner under the cursor, figures
+  labelled in words: this lap, against the reference, against the ideal lap. Picks
+  the corner by nearest apex, the same rule as `CornerTable.select_corner_at`.
+  Scrolls rather than imposing its height on the bottom row.
+- **Corner numbers** — the map (`TrackMap.set_corner_labels`) and the traces show
+  the short form of a corner's label (`_short_label`: "T6 Hairpin" → "T6"; a user's
+  own name or a detector "C4" stays whole).
+
+The bottom row runs the full width (`setCorner` gives both bottom corners to the
+bottom area) because the corner table has eleven columns. Default sizes are
+fractions of the window (`_arrange_docks`), and the initial size is capped to the
+screen (`_initial_size`). The arrangement is saved to `QSettings` when the window
+closes and restored on the next run; `Painéis ▸ Restaurar layout padrão`
+(`MainWindow.reset_layout`) puts everything back, header included. A saved state is
+applied only if it was written under the current `LAYOUT_STATE_VERSION` (now **2**)
+and `restoreState` accepts it; otherwise the default is used. Bump the version when
+a dock is added, removed or renamed — the object names (`dock_sessions`,
+`dock_laps`, `dock_corners`, `dock_detail`, `dock_consistency`, `dock_map`,
+`dock_gg`, `toolbar_main`, `toolbar_header`) are what saved layouts are keyed on.
 
 The toolbar reuses the menu's `QAction` objects, so checked and enabled state is
 shared. It shows each action's `iconText` — a short wording — while the menu keeps

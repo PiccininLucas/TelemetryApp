@@ -449,4 +449,42 @@ def _stylesheet(d: Palette) -> str:
     QLabel[role="placeholder"] {{
         color: {d.text_disabled};
     }}
+
+    /* The session header: a strip of figures across the top of the window. */
+    QToolBar#toolbar_header {{
+        background-color: {d.surface};
+        border-top: 1px solid {d.border};
+        border-bottom: 1px solid {d.border};
+        padding: 6px 12px;
+    }}
+    QScrollArea#header_scroll, QWidget#header_content,
+    QScrollArea#detail_scroll, QWidget#detail_content {{
+        background: transparent;
+        border: none;
+    }}
+    QLabel[role="title"] {{
+        color: {d.text};
+        font-family: {d.font_display};
+        font-size: 17px;
+    }}
+    QLabel[role="caption"] {{
+        color: {d.text_muted};
+        font-size: 11px;
+    }}
+    QLabel[role="stat"] {{
+        color: {d.text};
+        font-family: {d.font_display};
+        font-size: 15px;
+    }}
+    QLabel[role="section"] {{
+        color: {d.text_muted};
+        font-family: {d.font_display};
+        font-size: 11px;
+        padding: 8px 0 3px 0;
+        border-bottom: 1px solid {d.border};
+    }}
+    QFrame[role="divider"] {{
+        background-color: {d.border};
+        border: none;
+    }}
     """

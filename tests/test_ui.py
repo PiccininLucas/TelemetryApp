@@ -530,7 +530,7 @@ def test_main_window_builds_and_closes_cleanly(qt_app, catalog_with_sessions):
     try:
         assert window.windowTitle()
         assert window.centralWidget() is not None
-        assert len(window.docks) == 4
+        assert len(window.docks) == 7
         # No telemetry file exists behind this catalog, so no session opens.
         assert len(window._sessions) == 0
     finally:

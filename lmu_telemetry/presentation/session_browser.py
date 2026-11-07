@@ -241,6 +241,29 @@ class SessionBrowser(QtWidgets.QWidget):
             return None
         return item.data(0, ROLE_PAYLOAD)
 
+    def select_lap(self, session_id: str, lap_index: int) -> bool:
+        """Select one lap of one session, as if it had been clicked.
+
+        The lap list picks laps through here rather than opening them itself, so
+        the tree and the list can never disagree about which lap is on screen:
+        there is one way in, and it emits `lap_selected` like any click.
+
+        Returns:
+            False when the lap is not in the tree - a lap the catalog never
+            listed - in which case nothing changes.
+        """
+        iterator = QtWidgets.QTreeWidgetItemIterator(self.tree)
+        while iterator.value():
+            item = iterator.value()
+            if item.data(0, ROLE_KIND) == KIND_LAP:
+                payload: LapSelection = item.data(0, ROLE_PAYLOAD)
+                if payload.session_id == session_id and payload.lap_index == lap_index:
+                    self.tree.setCurrentItem(item)
+                    self.tree.scrollToItem(item)
+                    return True
+            iterator += 1
+        return False
+
     def select_default_lap(self) -> bool:
         """Open on the fastest comparable lap of the most recent session.
 

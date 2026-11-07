@@ -1,4 +1,5 @@
-"""The main window: the stacked traces in the centre, everything else docked.
+"""The main window: a summary strip on top, the stacked traces in the centre,
+everything else docked around them.
 
 Phase 6 turned the single speed plot into the comparison instrument: several
 channels stacked on one shared X axis, a second lap overlaid, and the delta-t
@@ -10,14 +11,26 @@ are at different places on the circuit. So while a comparison is drawn the time
 axis is disabled, and a reference lap from another circuit is refused outright
 rather than plotted against a distance grid that means nothing.
 
-The traces are the window's centre; the session browser, the corner tables, the
-track map and the g-g diagram are dock widgets. They can be hidden, moved,
-tabbed together or floated, and the arrangement is remembered between runs
-(`QSettings`). "Restaurar layout padrão" puts them back.
+The default arrangement reads top to bottom the way a lap is analysed:
+
+- **across the top**, the session header - track, car, the lap against its
+  reference, the sectors, the session's best and the ideal lap;
+- **on the left**, where the lap comes from: the session tree over the list of
+  that session's laps with their sectors;
+- **in the centre**, the traces;
+- **on the right**, where on the circuit: the track map, with its corners
+  numbered, over the g-g diagram;
+- **along the bottom**, corner by corner: the corner table, the card of the
+  corner under the cursor, and the consistency report, side by side.
+
+Every panel is a dock widget and the header a toolbar, so each can be hidden,
+moved, tabbed together or floated; the arrangement is remembered between runs
+(`QSettings`), and "Restaurar layout padrão" puts it back.
 """
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -34,11 +47,16 @@ from lmu_telemetry.presentation.chart_panel import (
     ROW_SPECS, AxisMode, ChartStack, LapTrace,
 )
 from lmu_telemetry.presentation.consistency_panel import ConsistencyPanel
+from lmu_telemetry.presentation.corner_detail import CornerDetail
 from lmu_telemetry.presentation.corner_table import CornerTable
 from lmu_telemetry.shared.formatting import format_gap, format_lap_time
 from lmu_telemetry.presentation.gg_panel import FrictionPanel
 from lmu_telemetry.presentation.import_worker import ImportWorker
+from lmu_telemetry.presentation.lap_list import LapList, best_lap, best_sectors
 from lmu_telemetry.presentation.session_browser import LapSelection, SessionBrowser
+from lmu_telemetry.presentation.session_header import (
+    SectorFigure, SessionHeader, SessionSummary,
+)
 from lmu_telemetry.presentation.session_state import (
     ComparisonMode, CurrentView, OpenSession, SessionPool,
 )
@@ -48,7 +66,7 @@ logger = get_logger(__name__)
 
 #: Bumped when a dock is added, removed or renamed, so a layout saved by an
 #: older build is dropped instead of half-applied.
-LAYOUT_STATE_VERSION = 1
+LAYOUT_STATE_VERSION = 2
 _SETTING_GEOMETRY = "window/geometry"
 _SETTING_STATE = "window/state"
 
@@ -72,7 +90,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._import_thread: QtCore.QThread | None = None
         self._import_worker: ImportWorker | None = None
         self.setWindowTitle(strings.WINDOW_TITLE)
-        self.resize(1360, 880)
+        self._initial_size()
         self._build()
         self._build_menus()
         self._build_toolbar()
@@ -101,35 +119,42 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.chart, stretch=1)
         self.setCentralWidget(central)
 
+        self.header = SessionHeader()
         self.browser = SessionBrowser(self._gateways.catalog)
+        self.lap_list = LapList()
         self.corner_table = CornerTable()
+        self.corner_detail = CornerDetail()
         self.consistency = ConsistencyPanel()
         self.track_map = TrackMap()
         self.friction = FrictionPanel()
 
-        # Tabs rather than two docks: both are per-corner tables of the same
-        # lap, and a fifth dock would leave every one of them too short to read.
-        self.tabs = QtWidgets.QTabWidget()
-        self.tabs.addTab(self.corner_table, strings.CORNERS_TAB)
-        self.tabs.addTab(self.consistency, strings.CONSISTENCY_TAB)
-
         self.dock_sessions = self._make_dock(
             "dock_sessions", strings.BROWSER_TITLE, self.browser)
+        self.dock_laps = self._make_dock("dock_laps", strings.DOCK_LAPS, self.lap_list)
+        # Corner table and consistency are two docks rather than two tabs of
+        # one: they answer different questions about the same corners - how was
+        # this lap, and how repeatable is the driver - and are read together.
         self.dock_corners = self._make_dock(
-            "dock_corners", strings.DOCK_CORNERS, self.tabs)
+            "dock_corners", strings.DOCK_CORNERS, self.corner_table)
+        self.dock_detail = self._make_dock(
+            "dock_detail", strings.DOCK_DETAIL, self.corner_detail)
+        self.dock_consistency = self._make_dock(
+            "dock_consistency", strings.DOCK_CONSISTENCY, self.consistency)
         self.dock_map = self._make_dock("dock_map", strings.MAP_TITLE, self.track_map)
         self.dock_gg = self._make_dock("dock_gg", strings.GG_TITLE, self.friction)
         self.docks = [
-            self.dock_sessions, self.dock_corners, self.dock_map, self.dock_gg,
+            self.dock_sessions, self.dock_laps, self.dock_corners,
+            self.dock_detail, self.dock_consistency, self.dock_map, self.dock_gg,
         ]
 
-        # Let the side docks run the full height, so the corner tables sit under
-        # the traces they are read against rather than under the whole window.
+        # The side columns stop above the bottom row, which runs the full width:
+        # the corner table has eleven columns and needs the room more than the
+        # session tree needs the height.
         Corner, Area = QtCore.Qt.Corner, QtCore.Qt.DockWidgetArea
         self.setCorner(Corner.TopLeftCorner, Area.LeftDockWidgetArea)
-        self.setCorner(Corner.BottomLeftCorner, Area.LeftDockWidgetArea)
+        self.setCorner(Corner.BottomLeftCorner, Area.BottomDockWidgetArea)
         self.setCorner(Corner.TopRightCorner, Area.RightDockWidgetArea)
-        self.setCorner(Corner.BottomRightCorner, Area.RightDockWidgetArea)
+        self.setCorner(Corner.BottomRightCorner, Area.BottomDockWidgetArea)
         self.setDockOptions(
             QtWidgets.QMainWindow.DockOption.AnimatedDocks
             | QtWidgets.QMainWindow.DockOption.AllowNestedDocks
@@ -138,6 +163,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._arrange_docks()
 
         self.browser.lap_selected.connect(self.show_lap)
+        self.lap_list.lap_chosen.connect(self._on_lap_chosen)
         self.corner_table.corner_selected.connect(self._on_cursor_moved)
         self.corner_table.corner_zoomed.connect(self.chart.zoom_to)
         self.corner_table.corner_renamed.connect(self.rename_corner)
@@ -164,10 +190,26 @@ class MainWindow(QtWidgets.QMainWindow):
         dock.setWidget(widget)
         return dock
 
+    def _initial_size(self) -> None:
+        """Open large enough for seven panels, but never larger than the screen.
+
+        A fixed size that suits a 1440p monitor would open off the edge of a
+        laptop's 1366 x 768, with the bottom row out of reach.
+        """
+        width, height = 1500, 950
+        screen = QtGui.QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, int(available.width() * 0.95))
+            height = min(height, int(available.height() * 0.92))
+        self.resize(width, height)
+
     def _arrange_docks(self) -> None:
-        """The default layout: sessions left, map over g-g on the right, the
-        corner tables under the traces."""
+        """The default layout: sessions over laps on the left, map over g-g on
+        the right, and corners, the corner card and consistency side by side
+        along the bottom."""
         Area = QtCore.Qt.DockWidgetArea
+        horizontal, vertical = QtCore.Qt.Orientation.Horizontal, QtCore.Qt.Orientation.Vertical
         # Dock first, then detach: a floating dock has to be docked before it
         # can be taken out of its area and placed again.
         for dock in self.docks:
@@ -175,23 +217,43 @@ class MainWindow(QtWidgets.QMainWindow):
             self.removeDockWidget(dock)
 
         self.addDockWidget(Area.LeftDockWidgetArea, self.dock_sessions)
+        self.splitDockWidget(self.dock_sessions, self.dock_laps, vertical)
         self.addDockWidget(Area.RightDockWidgetArea, self.dock_map)
-        self.splitDockWidget(
-            self.dock_map, self.dock_gg, QtCore.Qt.Orientation.Vertical
-        )
+        self.splitDockWidget(self.dock_map, self.dock_gg, vertical)
         self.addDockWidget(Area.BottomDockWidgetArea, self.dock_corners)
+        self.splitDockWidget(self.dock_corners, self.dock_detail, horizontal)
+        self.splitDockWidget(self.dock_detail, self.dock_consistency, horizontal)
         for dock in self.docks:
             dock.show()
 
-        horizontal, vertical = QtCore.Qt.Orientation.Horizontal, QtCore.Qt.Orientation.Vertical
-        self.resizeDocks([self.dock_sessions, self.dock_map], [380, 420], horizontal)
-        self.resizeDocks([self.dock_map, self.dock_gg], [460, 420], vertical)
-        self.resizeDocks([self.dock_corners], [300], vertical)
+        # The traces are the instrument, so the docks take what they need to
+        # be legible and no more: a bottom row about a quarter of the height,
+        # side columns wide enough for a lap's sectors and for a map that is
+        # not a thumbnail. Fractions of the window, so a laptop screen gets the
+        # same proportions as a large monitor rather than the same pixels.
+        width, height = max(self.width(), 800), max(self.height(), 600)
+        side = int(width * 0.275)
+        column = height - int(height * 0.26)
+        self.resizeDocks([self.dock_sessions, self.dock_map], [side, side], horizontal)
+        self.resizeDocks(
+            [self.dock_sessions, self.dock_laps],
+            [int(column * 0.42), int(column * 0.58)], vertical,
+        )
+        self.resizeDocks(
+            [self.dock_map, self.dock_gg],
+            [int(column * 0.56), int(column * 0.44)], vertical,
+        )
+        self.resizeDocks([self.dock_corners], [int(height * 0.26)], vertical)
+        self.resizeDocks(
+            [self.dock_corners, self.dock_detail, self.dock_consistency],
+            [int(width * 0.5), int(width * 0.18), int(width * 0.32)], horizontal,
+        )
 
     def reset_layout(self) -> None:
         """Put every panel back where it started."""
         self._arrange_docks()
         self.toolbar.setVisible(True)
+        self.header_bar.setVisible(True)
         self.statusBar().showMessage(strings.STATUS_LAYOUT_RESET)
 
     def _restore_layout(self) -> None:
@@ -412,6 +474,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.panel_toggle_actions.append(bar.toggleViewAction())
         self._panels_menu.addAction(bar.toggleViewAction())
 
+        # The session header: a toolbar on its own row rather than a dock, so it
+        # spans the whole window above the side columns and cannot be squeezed
+        # into a column where its figures would wrap.
+        self.addToolBarBreak(QtCore.Qt.ToolBarArea.TopToolBarArea)
+        header = self.header_bar = QtWidgets.QToolBar(strings.TOOLBAR_HEADER, self)
+        header.setObjectName("toolbar_header")
+        header.setMovable(False)
+        header.setFloatable(False)
+        header.addWidget(self.header)
+        self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, header)
+        self.panel_toggle_actions.append(header.toggleViewAction())
+        self._panels_menu.addAction(header.toggleViewAction())
+
     # -- catalog -----------------------------------------------------------
 
     def reload_catalog(self, *, select_first: bool = False) -> None:
@@ -565,6 +640,9 @@ class MainWindow(QtWidgets.QMainWindow):
         primary = opened.analysis_for(selection.lap_index)
         if primary is None:
             self._clear_panels()
+            # The lap list stays: it is how the user gets from a lap that cannot
+            # be drawn - a few seconds of partial lap - to one that can.
+            self.lap_list.show_laps(opened.session.laps, current_index=selection.lap_index)
             self._set_warnings(notes)
             self.statusBar().showMessage(strings.CHART_NO_DATA)
             return
@@ -645,6 +723,10 @@ class MainWindow(QtWidgets.QMainWindow):
             consistency=None if stint is None else stint.report,
         )
         self._show_side_panels(primary, delta)
+        self._show_overview(
+            opened, selection, primary, benchmark, benchmark_selection,
+            ideal, delta, corner_rows,
+        )
         self._sync_actions(comparing=benchmark_trace is not None)
         self._set_warnings(notes)
 
@@ -657,7 +739,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Corner apexes on every lap, and the ideal lap's seams when shown."""
         self.chart.set_corner_markers(
             [corner.apex_distance_m for corner in primary.corners],
-            [corner.label for corner in primary.corners],
+            [_short_label(corner.label) for corner in primary.corners],
         )
         seams = []
         if ideal is not None and self._mode is ComparisonMode.IDEAL:
@@ -681,6 +763,47 @@ class MainWindow(QtWidgets.QMainWindow):
             show_ideal=ideal is not None,
         )
         return rows
+
+    def _show_overview(
+        self,
+        opened: OpenSession,
+        selection: LapSelection,
+        primary: pipeline.LapAnalysis,
+        benchmark: pipeline.LapAnalysis | None,
+        benchmark_selection: LapSelection | None,
+        ideal,
+        delta,
+        corner_rows: list,
+    ) -> None:
+        """Fill the panels that summarise rather than measure: the header, the
+        lap list and the corner card."""
+        laps = opened.session.laps
+        # The reference is only marked in the list when it is a lap of this
+        # session; a pinned lap from another day has no row here.
+        reference_index = (
+            benchmark_selection.lap_index
+            if benchmark_selection is not None
+            and benchmark_selection.session_id == selection.session_id
+            else None
+        )
+        self.lap_list.show_laps(
+            laps, current_index=selection.lap_index, reference_index=reference_index
+        )
+        self.corner_detail.show_rows(
+            corner_rows, comparing=benchmark is not None, has_ideal=ideal is not None
+        )
+        self.header.show_summary(_session_summary(
+            opened, selection, primary, benchmark, benchmark_selection, ideal,
+            delta, self._mode,
+        ))
+
+    def _on_lap_chosen(self, lap_index: int) -> None:
+        """A lap picked in the lap list: opened through the session tree, so
+        the tree follows and there is a single way a lap gets shown."""
+        if self._selection is None:
+            return
+        if not self.browser.select_lap(self._selection.session_id, lap_index):
+            self.statusBar().showMessage(strings.STATUS_NO_SELECTION)
 
     def _show_consistency(self, opened: OpenSession, lap_index: int) -> None:
         """Show the stint the lap on screen belongs to.
@@ -799,6 +922,10 @@ class MainWindow(QtWidgets.QMainWindow):
                           else pipeline.loss_classes_on(primary.grid_m, delta)),
             caption=caption,
         )
+        self.track_map.set_corner_labels(
+            [corner.apex_distance_m for corner in primary.corners],
+            [_short_label(corner.label) for corner in primary.corners],
+        )
 
         # Opening on the delta colouring whenever there is a comparison: it is
         # the reason the panel exists, and having to find a menu item to see
@@ -833,6 +960,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.track_map.set_cursor_distance(distance_m)
         self.friction.set_cursor_distance(distance_m)
         self.corner_table.select_corner_at(distance_m)
+        self.corner_detail.select_corner_at(distance_m)
 
     def _report(
         self,
@@ -888,6 +1016,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _clear_panels(self) -> None:
         self._current = None
+        self.header.clear()
+        self.lap_list.clear()
+        self.corner_detail.clear()
         self.chart.clear()
         self.corner_table.clear()
         self.consistency.clear()
@@ -1068,6 +1199,75 @@ class MainWindow(QtWidgets.QMainWindow):
         self._save_layout()
         self._sessions.close_all()
         super().closeEvent(event)
+
+
+#: An official turn number as the corner label begins: T6, T4.1.
+_OFFICIAL_NUMBER = re.compile(r"^T\d+(?:\.\d+)?$")
+
+
+def _short_label(label: str) -> str:
+    """The form of a corner's label that fits on a map or above a trace.
+
+    "T6 Hairpin" becomes "T6": sixteen full names on the map would cover the
+    circuit, and the full name is one glance away in the corner card. A name
+    the user gave, or a detector's "C4", is already short and stays whole.
+    """
+    first = label.split(" ", 1)[0]
+    return first if _OFFICIAL_NUMBER.match(first) else label
+
+
+def _session_summary(
+    opened: OpenSession,
+    selection: LapSelection,
+    primary: pipeline.LapAnalysis,
+    benchmark: pipeline.LapAnalysis | None,
+    benchmark_selection: LapSelection | None,
+    ideal,
+    delta,
+    mode: ComparisonMode,
+) -> SessionSummary:
+    """What the header shows for the lap on screen."""
+    info = opened.session.info
+    laps = opened.session.laps
+    details = tuple(
+        part for part in (
+            selection.car_name or info.car_name, info.car_class,
+            info.session_type_label, info.weather,
+        )
+        if part
+    )
+
+    reference = None
+    if mode is ComparisonMode.IDEAL and ideal is not None and delta is not None:
+        reference = strings.HEADER_REFERENCE_IDEAL.format(
+            time=format_lap_time(ideal.total_time_s)
+        )
+    elif benchmark is not None and benchmark_selection is not None:
+        reference = strings.HEADER_REFERENCE_LAP.format(
+            number=benchmark_selection.lap_number,
+            time=format_lap_time(benchmark.time_s),
+        )
+
+    lap = next((each for each in laps if each.index == selection.lap_index), None)
+    own = lap.sector_times_s if lap is not None else (None, None, None)
+    sectors = tuple(
+        SectorFigure(time_s, best_s)
+        for time_s, best_s in zip(own[:3], best_sectors(laps), strict=False)
+    )
+    best = best_lap(laps)
+
+    return SessionSummary(
+        track=selection.track_name,
+        details=details,
+        lap_number=selection.lap_number,
+        lap_time_s=primary.time_s,
+        reference=reference,
+        delta_s=None if delta is None else delta.final_delta_s,
+        sectors=sectors,
+        best_lap_number=None if best is None else best.number,
+        best_lap_time_s=None if best is None else best.time_s,
+        ideal_time_s=None if ideal is None else ideal.total_time_s,
+    )
 
 
 def _benchmark_summary(

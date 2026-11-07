@@ -77,3 +77,24 @@ def test_only_the_missing_laps_are_analysed(session, monkeypatch):
     pipeline.analyse_session(session, precomputed=kept)
 
     assert set(calls) == set(first.laps) - set(kept)
+
+
+def test_a_known_circuit_is_analysed_with_its_official_turns(session):
+    """The demo is Fuji, which has sixteen turns and a speed-based detector that
+    finds only the seven the car actually slows for."""
+    analysis = pipeline.analyse_session(session)
+
+    labels = [corner.label for corner in analysis.reference_corners]
+    assert len(labels) == 16
+    assert [label.split()[0] for label in labels] == [f"T{n}" for n in range(1, 17)]
+    assert labels[0] == "T1 First Corner"
+    assert labels[-1] == "T16 Panasonic Corner"
+
+
+def test_an_unknown_circuit_keeps_the_speed_based_corners(session, monkeypatch):
+    monkeypatch.setattr(pipeline, "_track_name_of", lambda _session: "Nowhere Ring")
+
+    analysis = pipeline.analyse_session(session)
+
+    labels = [corner.label for corner in analysis.reference_corners]
+    assert labels and all(label.startswith("C") for label in labels)

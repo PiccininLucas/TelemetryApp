@@ -21,6 +21,10 @@ O layout atual é de três colunas fixas em `QSplitter` com uma `QTabWidget` int
 3. ~~Barra de ferramentas~~ **Feita.** Importar, atualizar, modo de comparação, fixar referência, eixo X e exportar PNG/PDF, com rótulos curtos. Reaproveita as mesmas ações dos menus.
 4. ~~Persistir geometria e visibilidade~~ **Feito.** `QSettings`, com versão do layout; um estado salvo incompatível cai no layout padrão.
 5. Revisar a barra de status e o banner de aviso. **Pendente**, depende da referência visual (etapa 1).
+7. ~~Layout padrão mais completo~~ **Feito (07/11/2026).** Cabeçalho de resumo da sessão no topo
+   (`session_header.py`), lista de voltas com setores sob o navegador (`lap_list.py`), cartão da
+   curva selecionada (`corner_detail.py`) entre a tabela de curvas e a consistência, e curvas
+   numeradas (T1..Tn) no mapa e nos gráficos. `LAYOUT_STATE_VERSION` passou a 2.
 6. ~~Quitar a dívida de arquitetura~~ **Feito.** `main_window.py` e `session_browser.py` não importam mais `infrastructure`: recebem `Gateways` (portas em `application/ports.py`) montados por `composition.py` a partir de `main.py`. A lista de dívida do `tests/test_architecture.py` foi removida.
 
 ## Critério de pronto
@@ -33,7 +37,10 @@ O layout atual é de três colunas fixas em `QSplitter` com uma `QTabWidget` int
 
 É a etapa de maior impacto: mexe na ligação entre todos os painéis. Fazer em passos pequenos, com `tests/test_ui.py` verde a cada passo.
 
-## Decisões em aberto
+## Decisões (07/11/2026)
 
-- Docks flutuantes ou layout fixo melhorado?
-- Qual a disposição padrão dos painéis?
+| Pergunta | Decisão |
+| --- | --- |
+| Docks flutuantes ou layout fixo melhorado? | **Docks**, mantidos: tudo pode ser escondido, movido, agrupado ou flutuar. |
+| Disposição padrão dos painéis | **Painel com cabeçalho**: resumo da sessão no topo; sessões sobre voltas à esquerda; gráficos no centro; mapa sobre g-g à direita; curvas, curva selecionada e consistência lado a lado na faixa de baixo, de largura total. |
+| Conteúdo novo | Resumo da sessão, lista de voltas com setores, detalhe da curva selecionada, números das curvas no mapa e nos gráficos. |

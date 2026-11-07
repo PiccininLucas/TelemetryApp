@@ -34,3 +34,16 @@ def format_value(value: float | None, decimals: int) -> str:
     if value is None or not math.isfinite(value):
         return "--"
     return f"{value:.{decimals}f}"
+
+
+def format_sector_time(seconds: float | None) -> str:
+    """A sector time: plain seconds (28.111), or m:ss.mmm past a minute.
+
+    Le Mans sectors run well over a minute, and "75.203" there would make the
+    reader do the arithmetic the lap-time form already does.
+    """
+    if seconds is None or not math.isfinite(seconds) or seconds <= 0:
+        return "--"
+    if seconds >= 60.0:
+        return format_lap_time(seconds)
+    return f"{seconds:.3f}"

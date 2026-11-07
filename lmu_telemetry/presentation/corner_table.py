@@ -85,16 +85,13 @@ class CornerTable(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # No heading of its own: the dock's title already says "Curvas", and a
+        # second one inside it only costs a row of the table.
         header = QtWidgets.QHBoxLayout()
-        header.setContentsMargins(8, 2, 8, 2)
-        heading = QtWidgets.QLabel(strings.CORNERS_TITLE)
-        heading.setProperty("role", "heading")
+        header.setContentsMargins(0, 0, 8, 0)
         self.ideal_summary = QtWidgets.QLabel()
+        self.ideal_summary.setProperty("role", "heading")
         self.ideal_summary.setToolTip(strings.IDEAL_CAVEAT)
-        self.ideal_summary.setAlignment(
-            QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
-        )
-        header.addWidget(heading)
         header.addWidget(self.ideal_summary, stretch=1)
         layout.addLayout(header)
 
@@ -114,14 +111,15 @@ class CornerTable(QtWidgets.QWidget):
         # table would destroy the one thing it is telling you.
         self.table.setSortingEnabled(False)
 
+        # Every column as wide as its contents, the spare width to the last.
+        # Stretching the name column instead gave it whatever the window had
+        # left and pushed the measurements off the side of a bottom-row dock,
+        # which is exactly where the figures are needed.
         header_view = self.table.horizontalHeader()
-        header_view.setStretchLastSection(False)
         header_view.setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.ResizeToContents
         )
-        header_view.setSectionResizeMode(
-            _INDEX_OF[COLUMN_NAME], QtWidgets.QHeaderView.ResizeMode.Stretch
-        )
+        header_view.setStretchLastSection(True)
 
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)

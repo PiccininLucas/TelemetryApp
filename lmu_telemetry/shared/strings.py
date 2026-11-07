@@ -261,7 +261,6 @@ GG_FILL_TOOLTIP = (
 GG_CURSOR = "{lateral:+.2f} g lat · {longitudinal:+.2f} g long · {total:.2f} g total"
 
 # --- Corner table -----------------------------------------------------------
-CORNERS_TITLE = "Curvas"
 CORNERS_EMPTY = "Nenhuma curva detectada nesta volta."
 
 CORNERS_COLUMN_NAME = "Curva"
@@ -490,8 +489,12 @@ ANON_SAME_PATH = (
 
 # --- Panels -----------------------------------------------------------------
 MENU_PANELS = "&Painéis"
-DOCK_CORNERS = "Curvas e consistência"
+DOCK_CORNERS = "Curvas"
+DOCK_CONSISTENCY = "Consistência"
+DOCK_LAPS = "Voltas"
+DOCK_DETAIL = "Curva selecionada"
 TOOLBAR_MAIN = "Barra de ferramentas"
+TOOLBAR_HEADER = "Resumo da sessão"
 #: Short forms for the toolbar, where the menu's full wording would push the
 #: last buttons into the overflow menu. The menu keeps the full text.
 TOOLBAR_COMPARE_BEST = "Melhor da sessão"
@@ -640,3 +643,63 @@ def session_type_label(code: str) -> str:
         "T": SESSION_TYPE_TEST,
     }
     return labels.get(code.upper(), SESSION_TYPE_UNKNOWN.format(code=code))
+
+# --- Session header ---------------------------------------------------------
+HEADER_EMPTY = "Nenhuma volta aberta. Escolha uma volta em Sessões, ou importe uma sessão."
+HEADER_LAP = "Volta {number}"
+HEADER_REFERENCE = "Referência"
+HEADER_REFERENCE_NONE = "sem comparação"
+HEADER_REFERENCE_LAP = "volta {number} · {time}"
+HEADER_REFERENCE_IDEAL = "volta ideal · {time}"
+HEADER_DELTA = "Diferença"
+HEADER_BEST = "Melhor da sessão"
+HEADER_BEST_VALUE = "{time} · volta {number}"
+HEADER_IDEAL = "Volta ideal"
+HEADER_IDEAL_VALUE = "{time} ({gain} s)"
+HEADER_SECTOR = "S{n}"
+HEADER_SECTOR_TOOLTIP = "Setor {n}: {time} · melhor da sessão {best} ({gap} s)"
+HEADER_SECTOR_BEST_TOOLTIP = "Setor {n}: {time} · melhor setor da sessão"
+HEADER_DELTA_TOOLTIP = (
+    "Tempo da volta aberta menos o da referência. Negativo: a volta aberta é "
+    "mais rápida."
+)
+
+# --- Lap list ---------------------------------------------------------------
+LAPS_EMPTY = "Abra uma sessão para ver as voltas."
+LAPS_COLUMN_LAP = "Volta"
+LAPS_COLUMN_TIME = "Tempo"
+LAPS_COLUMN_SECTOR = "S{n}"
+LAPS_COLUMN_GAP = "Δ melhor"
+LAPS_COLUMN_STATUS = "Situação"
+LAPS_SUMMARY = "{n} voltas · {comparable} comparáveis · melhor {best}"
+LAPS_MARK_BEST = "melhor"
+LAPS_MARK_REFERENCE = "ref"
+LAPS_TOOLTIP_BEST = "Melhor volta comparável da sessão"
+LAPS_TOOLTIP_REFERENCE = "Volta de referência da comparação atual"
+LAPS_TOOLTIP_SECTOR_BEST = "Melhor setor da sessão"
+LAPS_TOOLTIP_ROW = "Clique para abrir a volta."
+
+# --- Corner detail ----------------------------------------------------------
+DETAIL_EMPTY = "Escolha uma curva na tabela, no mapa ou no gráfico."
+DETAIL_APEX = "Ápice em {distance:.0f} m · janela {start:.0f}–{end:.0f} m"
+DETAIL_SECTION_LAP = "Nesta volta"
+DETAIL_SECTION_REFERENCE = "Contra a referência"
+DETAIL_SECTION_IDEAL = "Volta ideal"
+DETAIL_MIN_SPEED = "V mín"
+DETAIL_ENTRY_SPEED = "V entrada"
+DETAIL_BRAKING = "Frenagem"
+DETAIL_BRAKING_POINT = "Ponto de frenagem"
+DETAIL_THROTTLE = "Retomada"
+DETAIL_TRAIL = "Trail braking"
+DETAIL_COASTING = "Inércia"
+DETAIL_SPEED_DELTA = "ΔV mín"
+DETAIL_TIME_DELTA = "Δt na curva"
+DETAIL_GAIN = "A ganhar"
+DETAIL_BEST_LAP = "Melhor volta nesta curva"
+DETAIL_FLAT = "sem frenagem"
+DETAIL_NOT_COMPARING = "Sem comparação ativa."
+DETAIL_KMH = "{value} km/h"
+DETAIL_M = "{value} m"
+DETAIL_AT_M = "em {value} m"
+DETAIL_S = "{value} s"
+DETAIL_LAP = "volta {value}"
