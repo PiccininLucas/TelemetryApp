@@ -582,13 +582,13 @@ def test_importing_runs_off_the_interface_thread(qt_app, tmp_path, monkeypatch):
 
     window = MainWindow(build_gateways())
     try:
-        window._import(_demo_session_files())
-        assert window._import_thread is not None
-        assert _wait_until(lambda: window._import_thread is None)
+        window.import_files(_demo_session_files())
+        assert window.importer.is_running
+        assert _wait_until(lambda: not window.importer.is_running)
 
         assert import_threads and all(t is not main_thread for t in import_threads)
         assert window.browser.tree.topLevelItemCount() == 1
-        assert all(action.isEnabled() for action in window._import_actions)
+        assert all(action.isEnabled() for action in window.commands.import_actions)
     finally:
         window.close()
 
@@ -601,19 +601,19 @@ def test_a_second_import_is_refused_while_one_is_running(qt_app, tmp_path, monke
     monkeypatch.setenv(paths.ENV_DATA_DIR, str(tmp_path / "data"))
     window = MainWindow(build_gateways())
     try:
-        window._import(_demo_session_files())
-        first = window._import_thread
-        window._import(_demo_session_files())
+        window.import_files(_demo_session_files())
+        assert window.importer.is_running
+        window.import_files(_demo_session_files())
 
-        assert window._import_thread is first
         assert window.statusBar().currentMessage() == ui_strings.STATUS_IMPORT_BUSY
-        assert _wait_until(lambda: window._import_thread is None)
+        assert window.importer.start(_demo_session_files()) is False
+        assert _wait_until(lambda: not window.importer.is_running)
     finally:
         window.close()
 
 
 def test_an_import_that_fails_is_reported_not_swallowed(qt_app, tmp_path, monkeypatch):
-    from lmu_telemetry.presentation.main_window import ImportWorker
+    from lmu_telemetry.presentation.import_worker import ImportWorker
 
     monkeypatch.setenv(paths.ENV_DATA_DIR, str(tmp_path / "data"))
     broken = tmp_path / "Not A Session_R_2026-01-01T00_00_00Z.duckdb"
@@ -631,7 +631,7 @@ def test_an_import_that_fails_is_reported_not_swallowed(qt_app, tmp_path, monkey
 def test_session_pool_holds_two_files_and_evicts_the_third(qt_app):
     """A comparison against a pinned lap from another afternoon needs two files
     open. Beyond that, holding them open only leaks handles."""
-    from lmu_telemetry.presentation.main_window import OpenSession, SessionPool
+    from lmu_telemetry.presentation.session_state import OpenSession, SessionPool
 
     class FakeSession:
         def __init__(self):
@@ -661,7 +661,8 @@ def test_comparison_mode_survives_having_nothing_to_compare(qt_app,
                                                             catalog_with_sessions):
     """Switching to a pinned comparison with nothing pinned must say so, not
     crash."""
-    from lmu_telemetry.presentation.main_window import ComparisonMode, MainWindow
+    from lmu_telemetry.presentation.main_window import MainWindow
+    from lmu_telemetry.presentation.session_state import ComparisonMode
 
     window = MainWindow(build_gateways())
     try:
@@ -687,11 +688,11 @@ def test_time_axis_is_disabled_while_two_laps_are_drawn(qt_app,
     window = MainWindow(build_gateways())
     try:
         window._sync_actions(comparing=True)
-        assert not window.action_time.isEnabled()
+        assert not window.commands.axis_time.isEnabled()
         assert window.chart.axis_mode is AxisMode.DISTANCE
 
         window._sync_actions(comparing=False)
-        assert window.action_time.isEnabled()
+        assert window.commands.axis_time.isEnabled()
     finally:
         window.close()
 
@@ -986,7 +987,7 @@ def test_renaming_from_another_lap_replaces_the_name_instead_of_adding_one(qt_ap
     """The same corner's apex sits a metre or two elsewhere on another lap. An
     exact-distance match would keep the old reference and leave two names
     competing for one corner."""
-    from lmu_telemetry.presentation.main_window import OpenSession
+    from lmu_telemetry.presentation.session_state import OpenSession
 
     opened = OpenSession(
         "s", session=None, track_length_m=None,
@@ -1222,30 +1223,40 @@ def test_export_refuses_when_nothing_is_loaded(qt_app, catalog_with_sessions):
     window = MainWindow(build_gateways())
     try:
         assert window._current is None
-        window.export_png()
+        window.exporter.export_png()
         assert window.statusBar().currentMessage() == strings.ERR_EXPORT_NO_LAP
     finally:
         window.close()
 
 
-def test_suggested_file_name_says_what_is_in_it(qt_app, catalog_with_sessions):
-    from lmu_telemetry.presentation.main_window import CurrentView, MainWindow
-    from lmu_telemetry.presentation.session_browser import LapSelection
+def test_a_session_that_cannot_be_opened_is_an_error_not_a_warning(
+    qt_app, catalog_with_sessions
+):
+    """The catalog lists a file that is not on disk: nothing can be trusted, so
+    the banner says so in red and the status line points at it."""
+    from lmu_telemetry.presentation.main_window import MainWindow
+    from lmu_telemetry.presentation.notice_banner import Severity
 
     window = MainWindow(build_gateways())
     try:
-        window._current = CurrentView(
-            selection=LapSelection(
-                session_id="x", source_path="s.duckdb", lap_index=8,
-                lap_number=8, track_name="Autodromo Nazionale Monza",
-                car_name="LMP3", time_s=107.0,
-            ),
-            primary=None, primary_label="",
-        )
-        assert window._suggested_name(".pdf") == \
-            "Autodromo-Nazionale-Monza-volta8.pdf"
+        assert window._current is None
+        assert not window.notices.isHidden()
+        assert window.notices.severity is Severity.ERROR
+        assert window.statusBar().currentMessage() == strings.STATUS_OPEN_FAILED
     finally:
         window.close()
+
+
+def test_suggested_file_name_says_what_is_in_it():
+    from lmu_telemetry.presentation.exporting import suggested_name
+    from lmu_telemetry.presentation.session_browser import LapSelection
+
+    selection = LapSelection(
+        session_id="x", source_path="s.duckdb", lap_index=8,
+        lap_number=8, track_name="Autodromo Nazionale Monza",
+        car_name="LMP3", time_s=107.0,
+    )
+    assert suggested_name(selection, ".pdf") == "Autodromo-Nazionale-Monza-volta8.pdf"
 
 
 def test_export_dialects_follow_the_chosen_filter(qt_app):

@@ -319,6 +319,7 @@ def _stylesheet(d: Palette) -> str:
     r = d.radius
     t = d.sizes
     warning_tint = f"rgba({', '.join(map(str, _rgb(WARNING)))}, 0.12)"
+    error_tint = f"rgba({', '.join(map(str, _rgb(ERROR)))}, 0.14)"
     py, px = d.pad
     tint = f"rgba({d.accent_rgb}, 0.18)"
     tint_hover = f"rgba({d.accent_rgb}, 0.10)"
@@ -575,13 +576,34 @@ def _stylesheet(d: Palette) -> str:
     QSplitter::handle:vertical {{ height: 1px; }}
 
     /* Roles set from code with `setProperty("role", ...)`. */
-    QLabel[role="warning"] {{
-        background-color: {warning_tint};
-        color: {WARNING};
-        border: 1px solid {WARNING};
+    /* The notice banner above the traces: a tinted card, amber or red. */
+    QFrame#notice {{
         border-radius: {r}px;
         margin: 8px 8px 0 8px;
-        padding: 6px 10px;
+    }}
+    QFrame#notice[severity="warning"] {{
+        background-color: {warning_tint};
+        border: 1px solid {WARNING};
+    }}
+    QFrame#notice[severity="error"] {{
+        background-color: {error_tint};
+        border: 1px solid {ERROR};
+    }}
+    QLabel#notice_title {{
+        font-family: {d.font_display};
+    }}
+    QFrame#notice[severity="warning"] QLabel#notice_title {{
+        color: {WARNING};
+    }}
+    QFrame#notice[severity="error"] QLabel#notice_title {{
+        color: {ERROR};
+    }}
+    QLabel#notice_body {{
+        color: {d.text};
+    }}
+    QToolButton#notice_dismiss {{
+        color: {d.text_muted};
+        padding: 0 4px;
     }}
     QLabel[role="heading"] {{
         color: {d.text_muted};

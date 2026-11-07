@@ -158,15 +158,20 @@ STATUS_IMPORTED = "{n} sessão(ões) importada(s)."
 STATUS_IMPORT_PROGRESS = "Importando {done}/{total}: {name}"
 STATUS_IMPORT_BUSY = "Uma importação já está em andamento."
 STATUS_LAP_LOADED = (
-    "Volta {number} · {time} · {length:.0f} m · {n_corners} curvas · "
-    "carregada em {elapsed:.0f} ms"
+    "Volta {number} · {time} · {length:.0f} m · {n_corners} curvas"
 )
 STATUS_LAP_COMPARED = (
     "Volta {number} · {time} · {gap} s vs {reference} · "
-    "pior perda {loss} s em {loss_at:.0f} m · carregada em {elapsed:.0f} ms"
+    "pior perda {loss} s em {loss_at:.0f} m"
 )
+STATUS_TIMING = "analisada em {elapsed:.0f} ms"
+STATUS_TIMING_TOOLTIP = "Tempo para abrir, analisar e desenhar a volta"
+NOTICE_WARNING = "Atenção"
+NOTICE_ERROR = "Erro"
+NOTICE_DISMISS = "Dispensar aviso"
 STATUS_REFERENCE_LAP = "volta {number}"
 STATUS_REFERENCE_IDEAL = "volta ideal"
+STATUS_OPEN_FAILED = "Não foi possível abrir a sessão. Veja o aviso acima dos gráficos."
 STATUS_NO_SELECTION = "Selecione uma volta na árvore à esquerda."
 STATUS_REFERENCE_PINNED = "Volta {number} fixada como referência."
 STATUS_NO_REFERENCE_PINNED = "Nenhuma volta fixada. Use Exibir ▸ Comparação ▸ Fixar."

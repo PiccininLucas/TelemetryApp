@@ -139,8 +139,9 @@ lmu_telemetry/
     storage/                  paths.py, catalog.py (DuckDB), cache.py (JSON manifest), importer.py
     export/                   charts.py (matplotlib), tables.py (CSV), report.py (PDF), anonymise.py
   presentation/             PySide6
-    main_window, session_state, import_worker, session_browser, chart_panel,
-    track_map, gg_panel, corner_table, consistency_panel, theme,
+    main_window (composition only), lap_view, window_actions, exporting,
+    session_state, import_worker, status_line, notice_banner, session_browser,
+    chart_panel, track_map, gg_panel, corner_table, consistency_panel, theme,
     session_header, lap_list, corner_detail
 scripts/                    CLI tools (section 2)
 tests/                      pytest suite + synthetic data builders
@@ -454,7 +455,7 @@ A summary strip across the top, the traces in the centre, and everything else a
 ├ toolbar_header (SessionHeader): track · car │ lap · reference · Δ │ S1 S2 S3 │  ┤
 │                                  best of session · ideal lap                   │
 ├────────────────┬─────────────────────────────────────┬─────────────────────────┤
-│ dock_sessions  │ warning banner (amber)              │ dock_map   (TrackMap,   │
+│ dock_sessions  │ NoticeBanner (amber / red)          │ dock_map   (TrackMap,   │
 │ SessionBrowser │ ChartStack (centre widget)          │   corners T1..Tn)       │
 ├────────────────┤                                     ├─────────────────────────┤
 │ dock_laps      │                                     │ dock_gg    (g-g)        │
@@ -505,7 +506,33 @@ the full text and the tooltip carries it too.
 The window takes its collaborators as arguments: `MainWindow(gateways, settings=None)`.
 `settings` is injectable so tests never touch the user's real settings.
 
-### State objects (`session_state.py`; `ImportWorker` in `import_worker.py`)
+**`main_window.py` only builds and connects** (docks, layout persistence, and
+`_connect`, where every signal is wired). It does not import `pipeline` — a test
+holds that. The work it used to do lives beside it:
+
+| Module | Role |
+| --- | --- |
+| `lap_view.py` | `compose(sessions, selection, mode, pinned) → LapView`: the benchmark choice and its refusals, delta, ideal lap, corner rows, stint, map and g-g figures, header summary and status line, all as plain values. No widgets; testable without a window. `LapView.figures` is `None` when the lap cannot be analysed. |
+| `window_actions.py` | `WindowActions` (`window.commands`): every `QAction`, the menus, the main toolbar. Parameterised choices are typed signals (`comparison_chosen`, `axis_chosen`, `channel_toggled`, `map_colour_chosen`); `offer_*` / `allow_time_axis` keep the actions honest. |
+| `exporting.py` | `LapExporter` (`window.exporter`): the four exports sharing one dialog/suffix/dialect/error path, reporting through its `status` signal; `suggested_name`, `report_context(CurrentView)`. |
+| `import_worker.py` | `ImportWorker` (the work) and `ImportRunner` (`window.importer`: one run at a time on a `QThread`, `busy_changed`, `stop()` on close). |
+| `status_line.py` | `StatusLine` (below). |
+| `notice_banner.py` | `NoticeBanner` (below). |
+
+**Status line.** A *resting line* describes the lap on screen (`rest`); a
+*notice* — exported, pinned, layout restored — interrupts it for 6 s (`notify`)
+and the resting line comes back, so the bar never keeps describing something that
+is gone. Progress that will end with its own message is `notify(..., sticky=True)`.
+The analysis time sits apart as a permanent, muted label on the right
+(`set_timing`), not in the lap's line.
+
+**Notice banner.** One note per line (bulleted when there are several), two
+severities — `WARNING` (amber: drawn, with a caveat) and `ERROR` (red: nothing to
+trust, e.g. the session file cannot be opened) — styled by the theme through the
+frame's `severity` property, and a dismiss button that hides it until the next lap
+brings notes of its own.
+
+### State objects (`session_state.py`; `ImportWorker`/`ImportRunner` in `import_worker.py`)
 
 - **`SessionPool`** — LRU of at most **2** open `Session`s (enough for a
   comparison against a pinned lap from another file). Evicting closes the DuckDB
@@ -516,16 +543,17 @@ The window takes its collaborators as arguments: `MainWindow(gateways, settings=
   delta, ideal, corner rows, consistency). **Exports read from this**, never
   recompute, so a file always matches what the user was looking at.
 - **`ImportWorker`** — imports files on a `QThread` with its own catalog
-  connection; emits `progress` and `finished`. Everything else in the window still
-  runs on the interface thread.
+  connection; emits `progress` and `finished`. **`ImportRunner`** owns the thread:
+  refuses a second run, emits `busy_changed`, and `stop()` lets the current file
+  finish. Everything else in the window still runs on the interface thread.
 - **`ComparisonMode`** — `NONE`, `SESSION_BEST` (default), `PINNED`, `IDEAL`.
 
 ### Interaction flow
 
-`SessionBrowser.lap_selected(LapSelection)` → `MainWindow.show_lap` → open session
-→ `analysis_for(lap)` → `session_analysis()` (ideal lap) → choose benchmark →
-`pipeline.delta_*` → fill chart, markers, corner table, consistency, map,
-g-g → warnings → status line with timing.
+`SessionBrowser.lap_selected(LapSelection)` → `MainWindow.show_lap` →
+`lap_view.compose` (open session → `analysis_for(lap)` → `session_analysis()` →
+choose benchmark → `pipeline.delta_*` → figures) → `MainWindow._show` hands each
+panel its part → notices → resting status line; timing on the right.
 
 **One cursor for the whole window:** `chart.cursor_moved`, `track_map.distance_picked`,
 `corner_table.corner_selected` and `consistency.corner_selected` all feed
@@ -611,7 +639,7 @@ No Qt imports (matplotlib is forced to Agg), so it runs in CI or over SSH.
 The exports **redraw** with matplotlib instead of screenshotting pyqtgraph, so the
 unit conversions must stay shared to keep exported numbers equal to on-screen ones.
 `ReportContext` holds the analysis objects as `object` (to avoid importing
-`pipeline` types into `export`); it is assembled by `MainWindow._report_context`
+`pipeline` types into `export`); it is assembled by `exporting.report_context`
 or by `scripts/export_session.py`.
 
 ---
@@ -712,7 +740,7 @@ session at that track is re-imported with `--force`.
 
 ### Fixed — performance and responsiveness
 
-**P1 (partly) — Importing no longer freezes the window.** `MainWindow._import`
+**P1 (partly) — Importing no longer freezes the window.** `ImportRunner`
 runs `ImportWorker` on a `QThread` with its own catalog connection, shows
 progress in the status bar, refuses a second import while one runs, reports an
 unexpected crash as a failure instead of losing it, and `closeEvent` cancels and
@@ -849,5 +877,5 @@ if the G-force labelling was fixed, it fails on purpose, and `corrections.py` mu
 change.
 
 **Add a comparison mode.** Extend `ComparisonMode`, handle it in
-`MainWindow._benchmark_selection`/`_show_lap`, add the menu action in
-`_build_comparison_actions` and strings; delta arrays come from `pipeline`.
+`lap_view.benchmark_selection_for`/`compose`, add it to `COMPARISON_MODES` and the
+labels in `window_actions.py` and strings; delta arrays come from `pipeline`.

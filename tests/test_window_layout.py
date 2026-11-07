@@ -182,37 +182,37 @@ def test_reset_layout_docks_a_floating_panel_again(window):
 def test_the_toolbar_reuses_the_menu_actions(window):
     """One QAction in both places, so checked and enabled state cannot drift."""
     in_bar = set(window.toolbar.actions())
-    assert window.action_import in in_bar
-    assert window.action_refresh in in_bar
-    assert window.action_pin in in_bar
-    assert window.action_distance in in_bar
-    assert set(window.comparison_actions.values()) <= in_bar
+    assert window.commands.import_files in in_bar
+    assert window.commands.refresh in in_bar
+    assert window.commands.pin in in_bar
+    assert window.commands.axis_distance in in_bar
+    assert set(window.commands.comparison.values()) <= in_bar
 
 
 def test_toolbar_buttons_use_short_labels_and_keep_the_full_tooltip(window):
     """Long menu wording pushed the last buttons into the overflow menu."""
-    best = window.comparison_actions[ComparisonMode.SESSION_BEST]
+    best = window.commands.comparison[ComparisonMode.SESSION_BEST]
     assert best.iconText() == strings.TOOLBAR_COMPARE_BEST
     assert len(best.iconText()) < len(best.text())
     assert best.toolTip() == best.text().replace("&", "")
-    assert window.export_actions["pdf"].iconText() == strings.TOOLBAR_EXPORT_PDF
+    assert window.commands.export["pdf"].iconText() == strings.TOOLBAR_EXPORT_PDF
 
 
 def test_the_time_axis_keeps_its_own_tooltip(window):
     """It explains why the axis is blocked during a comparison."""
-    assert window.action_time.toolTip() == strings.ACTION_AXIS_TIME_BLOCKED
+    assert window.commands.axis_time.toolTip() == strings.ACTION_AXIS_TIME_BLOCKED
 
 
 def test_choosing_a_comparison_in_the_toolbar_changes_the_mode(window):
-    window.comparison_actions[ComparisonMode.NONE].trigger()
+    window.commands.comparison[ComparisonMode.NONE].trigger()
     assert window._mode is ComparisonMode.NONE
 
 
 def test_import_actions_in_the_toolbar_are_disabled_while_importing(window):
-    window._import_actions_enabled(False)
-    assert not window.action_import.isEnabled()
-    window._import_actions_enabled(True)
-    assert window.action_import.isEnabled()
+    window.commands.set_import_enabled(False)
+    assert not window.commands.import_files.isEnabled()
+    window.commands.set_import_enabled(True)
+    assert window.commands.import_files.isEnabled()
 
 
 def test_the_toolbar_can_be_hidden_from_the_panels_menu(window):
@@ -310,7 +310,7 @@ def test_a_layout_saved_under_another_version_is_ignored(
 def test_the_session_header_can_be_hidden_from_the_panels_menu(window):
     window.header_bar.toggleViewAction().trigger()
     assert window.header_bar.isHidden()
-    assert window.header_bar.toggleViewAction() in window.panel_toggle_actions
+    assert window.header_bar.toggleViewAction() in window.commands.panel_toggles
 
 
 def test_a_layout_saved_before_the_new_panels_is_not_applied(
