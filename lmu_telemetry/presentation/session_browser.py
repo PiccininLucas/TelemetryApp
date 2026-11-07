@@ -143,9 +143,7 @@ class SessionBrowser(QtWidgets.QWidget):
         item = QtWidgets.QTreeWidgetItem(self.tree, [name, "", ""])
         item.setData(0, ROLE_KIND, KIND_TRACK)
         item.setText(2, strings.BROWSER_N_SESSIONS.format(n=len(sessions)))
-        font = item.font(0)
-        font.setBold(True)
-        item.setFont(0, font)
+        item.setFont(0, theme.emphasised(item.font(0)))
         return item
 
     def _add_car(
@@ -219,7 +217,7 @@ class SessionBrowser(QtWidgets.QWidget):
         # holds telemetry worth looking at, it just has no meaningful time.
         if not lap.is_comparable:
             for column in range(3):
-                item.setForeground(column, QtGui.QColor(theme.TEXT_DISABLED))
+                item.setForeground(column, QtGui.QColor(theme.tone_colour(theme.Tone.DIM)))
         elif is_best:
             for column in range(2):
                 item.setForeground(column, QtGui.QColor(theme.ACCENT))

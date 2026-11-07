@@ -193,7 +193,7 @@ class CornerDetail(QtWidgets.QWidget):
             "coasting",
             strings.DETAIL_S.format(value=format_value(corner.coasting_time_s, 2)),
             # The same threshold the table uses to flag a hesitation.
-            colour=theme.WARNING if corner.coasting_time_s >= 0.25 else None,
+            tone=theme.Tone.WARNING if corner.coasting_time_s >= 0.25 else None,
         )
 
         self.not_comparing.setVisible(not self._comparing)
@@ -205,13 +205,13 @@ class CornerDetail(QtWidgets.QWidget):
                 "speed_delta",
                 "--" if speed_delta is None
                 else strings.DETAIL_KMH.format(value=f"{speed_delta:+.1f}"),
-                colour=_better_colour(speed_delta, higher_is_better=True),
+                tone=theme.verdict(speed_delta, higher_is_better=True),
             )
             self._set(
                 "time_delta",
                 "--" if row.delta_s is None
                 else strings.DETAIL_S.format(value=format_gap(row.delta_s)),
-                colour=_better_colour(row.delta_s, higher_is_better=False),
+                tone=theme.verdict(row.delta_s, higher_is_better=False),
             )
 
         self.ideal_section.setVisible(self._has_ideal)
@@ -219,7 +219,7 @@ class CornerDetail(QtWidgets.QWidget):
         if self._has_ideal:
             self._set("gain", "--" if row.gain_s is None
                       else strings.DETAIL_S.format(value=f"{row.gain_s:.3f}"),
-                      colour=theme.WARNING if (row.gain_s or 0.0) > 0.05 else None)
+                      tone=theme.Tone.WARNING if (row.gain_s or 0.0) > 0.05 else None)
             self._set("best_lap", "--" if row.best_lap_index is None
                       else strings.DETAIL_LAP.format(value=row.best_lap_index))
 
@@ -227,10 +227,10 @@ class CornerDetail(QtWidgets.QWidget):
         for widget in (self.title, self.subtitle, self.body):
             widget.show()
 
-    def _set(self, key: str, text: str, *, colour: str | None = None) -> None:
+    def _set(self, key: str, text: str, *, tone: theme.Tone | None = None) -> None:
         label = self.values[key]
         label.setText(text)
-        label.setStyleSheet(f"color: {colour};" if colour else "")
+        theme.set_tone(label, tone)
 
     def clear(self) -> None:
         self._rows = []
@@ -250,12 +250,3 @@ def _kmh(speed_ms: float | None) -> str:
     if speed_ms is None:
         return "--"
     return strings.DETAIL_KMH.format(value=format_value(speed_ms * 3.6, 1))
-
-
-def _better_colour(value: float | None, *, higher_is_better: bool) -> str | None:
-    """Green where the lap on screen is better, red where worse - the same rule
-    and colours as the corner table, so the card and the row never disagree."""
-    if value is None or not np.isfinite(value) or value == 0.0:
-        return None
-    better = value > 0 if higher_is_better else value < 0
-    return theme.COLOUR_THROTTLE if better else theme.COLOUR_BRAKE

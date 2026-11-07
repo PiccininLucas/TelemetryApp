@@ -470,7 +470,7 @@ A summary strip across the top, the traces in the centre, and everything else a
 - **`SessionHeader`** (`session_header.py`) — a non-movable toolbar on its own row
   (`addToolBarBreak`), so it spans the window above the side columns. Fed a
   `SessionSummary` the window assembles in `_session_summary`. Session-best sectors
-  are drawn in `TRACE_IDEAL`; the delta is green/red *and* signed. Its figures sit
+  are drawn in the `BEST` tone; the delta is green/red *and* signed. Its figures sit
   in a horizontal `QScrollArea`, so the header never sets the window's minimum width.
 - **`LapList`** (`lap_list.py`) — every lap of the open session in driving order:
   time, S1–S3, gap to the best, status. Best lap and best sectors are computed among
@@ -538,19 +538,39 @@ re-applies names and drops its `SessionAnalysis` → `show_lap` again.
 ### Theme (`presentation/theme.py`)
 
 Two layers: a `Palette` (four surface steps, three text steps, one accent, the
-corner radius, the type) and semantic roles read from it (`BACKGROUND`, `SURFACE`,
-`SURFACE_RAISED`, `BORDER`, `TEXT*`, `ACCENT`, `PLOT_BACKGROUND`). Panels use the
-roles, never a hex literal. Widgets are transparent by default; only the window,
+corner radius, the type families and a `TypeScale`) and semantic roles read from it
+(`BACKGROUND`, `SURFACE`, `SURFACE_RAISED`, `BORDER`, `TEXT*`, `ACCENT`,
+`PLOT_BACKGROUND`, `TYPE`). Panels use the roles, never a hex literal.
+
+**Type scale** (`TYPE`, pixels): `micro` 10 (turn numbers on the map), `caption` 11,
+`label` 12 (headers, dock and plot titles), `body` 13, `stat` 15, `title` 17. Every
+`font-size` in the style sheet is a step; text pyqtgraph draws uses
+`PLOT_TEXT_SIZE` or `theme.font(step)`.
+
+**Tones** say what a coloured figure *means*: `Tone.GAIN`, `LOSS`, `BEST`,
+`WARNING`, `DIM` (`TONE_COLOURS`). `theme.verdict(value, higher_is_better=...)` is
+the single gain/loss rule shared by the corner table, the corner card, the header
+and the trace readout. On a `QLabel` a tone is a dynamic property the style sheet
+selects on (`theme.set_tone`, which re-polishes); on a table or tree item, which no
+style sheet reaches, it is a foreground (`theme.tone_colour`). Other helpers:
+`theme.emphasised(font)` (the one emphasis weight), `theme.rich(text, colour)`
+(escaped coloured rich text for legends and readouts). Widgets are transparent by default; only the window,
 the panels (docks and the `#central` card) and the widgets Qt paints itself name a
 surface, which is what lets a panel be a card without every label carrying a
 background.
 
 **Data colours are not in the palette** (reference/comparison/ideal traces, pedal
-states, the gain/loss fill): they mean the same thing whatever the chrome looks
-like. The identity rests on one rule: **the accent is never a data colour**.
-`tests/test_theme.py` holds it (hue distance from every data colour), together
-with AA contrast for text and accent, and a check that the style sheet parses and
-uses only known properties. Dark only; there is no light theme.
+states, `GAIN`/`LOSS` and their fills, the map's `LOSS_SCALE`): they mean the same
+thing whatever the chrome looks like. The identity rests on one rule: **the accent
+is never a data colour**.
+
+`tests/test_theme.py` holds it (hue distance from every data colour), together with
+AA contrast for text and accent, a style sheet that parses and uses only known
+properties, font sizes drawn from the scale, a reference/comparison pair that stays
+apart under simulated protanopia, deuteranopia and tritanopia (Machado 2009, CIE76
+ΔE ≥ 40), and two guards over every other module in `presentation/`: **no colour
+literal and no `setStyleSheet`**. The print palette in `infrastructure/export/`
+(white paper) is separate by design. Dark only; there is no light theme.
 
 ### Rules baked into the UI
 

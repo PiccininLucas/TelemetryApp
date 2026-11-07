@@ -631,11 +631,11 @@ class ChartStack(QtWidgets.QWidget):
         if self._primary is None:
             self.legend.clear()
             return
-        parts = [_coloured(self._primary.label, theme.TRACE_REFERENCE)]
+        parts = [theme.rich(self._primary.label, theme.TRACE_REFERENCE)]
         parts.append(
-            _coloured(self._benchmark.label, theme.TRACE_COMPARISON)
+            theme.rich(self._benchmark.label, theme.TRACE_COMPARISON)
             if self._benchmark is not None
-            else _coloured(strings.CHART_LEGEND_NO_BENCHMARK, theme.TEXT_DISABLED)
+            else theme.rich(strings.CHART_LEGEND_NO_BENCHMARK, theme.TEXT_DISABLED)
         )
         self.legend.setText(strings.CHART_READOUT_SEPARATOR.join(parts))
 
@@ -704,7 +704,7 @@ class ChartStack(QtWidgets.QWidget):
         primary = self._primary.sample(series.channel, x, self._axis_mode)
         if primary is None:
             return ""
-        text = _coloured(
+        text = theme.rich(
             format_value(primary * series.scale, series.decimals),
             series.colour or theme.TRACE_REFERENCE,
         )
@@ -715,7 +715,7 @@ class ChartStack(QtWidgets.QWidget):
                 # the two laps apart by dashing it italicises here instead.
                 # Without this, "acel 0/0" is two green numbers with nothing
                 # saying which lap either belongs to.
-                text += "/" + _coloured(
+                text += "/" + theme.rich(
                     format_value(other * series.scale, series.decimals),
                     series.colour or theme.TRACE_COMPARISON,
                     italic=series.colour is not None,
@@ -731,8 +731,10 @@ class ChartStack(QtWidgets.QWidget):
         if index is None:
             return ""
         value = float(self._delta_s[index])
-        colour = theme.COLOUR_BRAKE if value > 0 else theme.COLOUR_THROTTLE
-        return f"{strings.CHART_SERIES_DELTA} {_coloured(f'{value:+.3f}', colour)}"
+        colour = theme.tone_colour(
+            theme.verdict(value, higher_is_better=False), default=theme.TEXT_MUTED
+        )
+        return f"{strings.CHART_SERIES_DELTA} {theme.rich(f'{value:+.3f}', colour)}"
 
 
 # --------------------------------------------------------------------------- #
@@ -755,8 +757,3 @@ def _nearest_index(x_values: np.ndarray, x: float) -> int | None:
         return len(x_values) - 1
     before = after - 1
     return before if abs(x_values[before] - x) <= abs(x_values[after] - x) else after
-
-
-def _coloured(text: str, colour: str, *, italic: bool = False) -> str:
-    style = f"color:{colour}" + (";font-style:italic" if italic else "")
-    return f'<span style="{style}">{text}</span>'

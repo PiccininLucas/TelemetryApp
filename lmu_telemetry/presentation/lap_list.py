@@ -152,17 +152,17 @@ class LapList(QtWidgets.QWidget):
         is_reference = reference_index is not None and lap.index == reference_index
         # A lap that cannot be compared is still listed - it is part of the
         # session - but dimmed, so it never reads as a candidate.
-        dim = None if lap.is_comparable else theme.TEXT_DISABLED
+        dim = None if lap.is_comparable else theme.Tone.DIM
 
         number = str(lap.number)
         if is_reference:
             number = f"{number}  {strings.LAPS_MARK_REFERENCE}"
-        self._set(row, COLUMN_LAP, number, colour=dim,
+        self._set(row, COLUMN_LAP, number, tone=dim,
                   tooltip=strings.LAPS_TOOLTIP_REFERENCE if is_reference else "")
 
         self._set(
             row, COLUMN_TIME, format_lap_time(lap.time_s),
-            colour=theme.TRACE_IDEAL if is_best else dim, bold=is_best,
+            tone=theme.Tone.BEST if is_best else dim, bold=is_best,
             tooltip=strings.LAPS_TOOLTIP_BEST if is_best else "",
         )
 
@@ -175,7 +175,7 @@ class LapList(QtWidgets.QWidget):
             )
             self._set(
                 row, column, format_sector_time(sector),
-                colour=theme.TRACE_IDEAL if is_best_sector else dim,
+                tone=theme.Tone.BEST if is_best_sector else dim,
                 tooltip=strings.LAPS_TOOLTIP_SECTOR_BEST if is_best_sector else "",
             )
 
@@ -184,10 +184,10 @@ class LapList(QtWidgets.QWidget):
             if best is not None and lap.is_comparable and not is_best else None
         )
         self._set(row, COLUMN_GAP, strings.LAPS_MARK_BEST if is_best else format_gap(gap),
-                  colour=theme.TRACE_IDEAL if is_best else dim)
+                  tone=theme.Tone.BEST if is_best else dim)
 
         flags = [flag.value for flag in lap.flags]
-        self._set(row, COLUMN_STATUS, strings.primary_lap_flag(flags), colour=dim,
+        self._set(row, COLUMN_STATUS, strings.primary_lap_flag(flags), tone=dim,
                   tooltip=", ".join(lap.flag_labels()), align_right=False)
 
     def _set(
@@ -196,7 +196,7 @@ class LapList(QtWidgets.QWidget):
         column: int,
         text: str,
         *,
-        colour: str | None = None,
+        tone: theme.Tone | None = None,
         bold: bool = False,
         tooltip: str = "",
         align_right: bool = True,
@@ -206,12 +206,10 @@ class LapList(QtWidgets.QWidget):
             item.setTextAlignment(
                 QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
             )
-        if colour is not None:
-            item.setForeground(QtGui.QColor(colour))
+        if tone is not None:
+            item.setForeground(QtGui.QColor(theme.tone_colour(tone)))
         if bold:
-            font = item.font()
-            font.setBold(True)
-            item.setFont(font)
+            item.setFont(theme.emphasised(item.font()))
         item.setToolTip(tooltip or strings.LAPS_TOOLTIP_ROW)
         self.table.setItem(row, column, item)
 

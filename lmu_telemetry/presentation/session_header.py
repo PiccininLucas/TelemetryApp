@@ -105,11 +105,9 @@ class _Stat(QtWidgets.QWidget):
         layout.addWidget(self.caption)
         layout.addWidget(self.value)
 
-    def set(self, text: str, *, colour: str | None = None, tooltip: str = "") -> None:
+    def set(self, text: str, *, tone: theme.Tone | None = None, tooltip: str = "") -> None:
         self.value.setText(text)
-        # An inline colour on top of the role's stylesheet: data colours are
-        # fixed values, not part of the palette the stylesheet carries.
-        self.value.setStyleSheet(f"color: {colour};" if colour else "")
+        theme.set_tone(self.value, tone)
         self.setToolTip(tooltip)
 
 
@@ -222,7 +220,7 @@ class SessionHeader(QtWidgets.QWidget):
         self.reference.set(summary.reference or strings.HEADER_REFERENCE_NONE)
         self.delta.set(
             format_gap(summary.delta_s),
-            colour=_gap_colour(summary.delta_s),
+            tone=theme.verdict(summary.delta_s, higher_is_better=False),
             tooltip=strings.HEADER_DELTA_TOOLTIP,
         )
 
@@ -255,7 +253,7 @@ class SessionHeader(QtWidgets.QWidget):
         if sector.is_best:
             # Session-best sectors in the "faster" colour: the one fact a timing
             # screen shows about a sector before any other.
-            stat.set(text, colour=theme.TRACE_IDEAL,
+            stat.set(text, tone=theme.Tone.BEST,
                      tooltip=strings.HEADER_SECTOR_BEST_TOOLTIP.format(n=number, time=text))
             return
         gap = sector.gap_s
@@ -279,13 +277,3 @@ def _three(sectors: tuple[SectorFigure, ...]) -> tuple[SectorFigure, ...]:
     """Exactly three sectors, padding with empty ones."""
     padded = tuple(sectors[:3])
     return padded + tuple(SectorFigure(None) for _ in range(3 - len(padded)))
-
-
-def _gap_colour(gap_s: float | None) -> str | None:
-    """Green when the lap on screen is faster, red when slower.
-
-    The sign is always printed as well, so the colour is never the only cue.
-    """
-    if gap_s is None or gap_s == 0.0:
-        return None
-    return theme.COLOUR_THROTTLE if gap_s < 0 else theme.COLOUR_BRAKE

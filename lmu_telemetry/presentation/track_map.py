@@ -31,7 +31,7 @@ from enum import Enum
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from lmu_telemetry.shared import strings
 from lmu_telemetry.presentation import theme
@@ -54,16 +54,8 @@ PEDAL_COLOURS: dict[int, str] = {
     +1: theme.COLOUR_THROTTLE,
 }
 
-#: Colour of each loss class from `analysis.delta.loss_classes`. Neutral is
-#: deliberately dim: most of a lap is neutral, and a bright neutral would drown
-#: out the few stretches worth looking at.
-LOSS_COLOURS: dict[int, str] = {
-    -2: "#ff4d52",
-    -1: "#a8383c",
-    0: "#4a5058",
-    +1: "#2a8f68",
-    +2: "#3ce09f",
-}
+#: Colour of each loss class from `analysis.delta.loss_classes`.
+LOSS_COLOURS: dict[int, str] = theme.LOSS_SCALE
 
 #: Legend entries per mode: (class value, label).
 PEDAL_LEGEND = (
@@ -245,8 +237,7 @@ class TrackMap(QtWidgets.QWidget):
         self._apexes.setData(xs, ys)
         # Smaller than the interface text: on a tight complex - Fuji's Dunlop,
         # Le Mans's Ford chicanes - four labels sit within a few pixels.
-        font = QtGui.QFont()
-        font.setPointSizeF(max(font.pointSizeF() - 1.5, 7.0))
+        font = theme.font(theme.TYPE.micro)
         for x, y, (_distance, label) in zip(xs, ys, self._corner_marks, strict=True):
             text = pg.TextItem(label, color=theme.TEXT_MUTED, anchor=(0.5, 1.3))
             text.setFont(font)
@@ -328,7 +319,7 @@ class TrackMap(QtWidgets.QWidget):
         colours = (PEDAL_COLOURS if self._mode is MapColour.PEDALS
                    else LOSS_COLOURS)
         self.legend.setText("   ".join(
-            f'<span style="color:{colours[value]}">&#9632;</span> {label}'
+            f"{theme.rich('■', colours[value])} {label}"
             for value, label in entries
         ))
 

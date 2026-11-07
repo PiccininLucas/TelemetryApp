@@ -205,13 +205,13 @@ class CornerTable(QtWidgets.QWidget):
                       format_value(corner.braking_length_m, 0))
             self._set(position, COLUMN_TRAIL, f"{corner.trail_braking_m:.0f}")
             self._set(position, COLUMN_COASTING, f"{corner.coasting_time_s:.2f}",
-                      colour=_coasting_colour(corner.coasting_time_s))
+                      tone=_coasting_tone(corner.coasting_time_s))
 
             self._set(position, COLUMN_SPEED_DELTA,
                       _signed(_kmh(row.speed_delta_ms), 1),
-                      colour=_delta_colour(row.speed_delta_ms, higher_is_better=True))
+                      tone=theme.verdict(row.speed_delta_ms, higher_is_better=True))
             self._set(position, COLUMN_DELTA, _signed(row.delta_s, 3),
-                      colour=_delta_colour(row.delta_s, higher_is_better=False))
+                      tone=theme.verdict(row.delta_s, higher_is_better=False))
 
             self._set(position, COLUMN_BEST_LAP,
                       "--" if row.best_lap_index is None
@@ -219,9 +219,9 @@ class CornerTable(QtWidgets.QWidget):
             self._set(
                 position, COLUMN_GAIN,
                 "--" if row.gain_s is None else f"{row.gain_s:.3f}",
-                colour=(theme.WARNING
-                        if worst_gain is not None and row.gain_s == worst_gain
-                        and worst_gain > 0 else None),
+                tone=(theme.Tone.WARNING
+                      if worst_gain is not None and row.gain_s == worst_gain
+                      and worst_gain > 0 else None),
                 tooltip=strings.CORNERS_TOOLTIP_GAIN,
             )
 
@@ -232,7 +232,7 @@ class CornerTable(QtWidgets.QWidget):
         text: str,
         *,
         editable: bool = False,
-        colour: str | None = None,
+        tone: theme.Tone | None = None,
         tooltip: str | None = None,
     ) -> None:
         item = QtWidgets.QTableWidgetItem(text)
@@ -245,8 +245,8 @@ class CornerTable(QtWidgets.QWidget):
                 | QtCore.Qt.AlignmentFlag.AlignVCenter
             )
         item.setFlags(flags)
-        if colour is not None:
-            item.setForeground(QtGui.QColor(colour))
+        if tone is not None:
+            item.setForeground(QtGui.QColor(theme.tone_colour(tone)))
         if tooltip is not None:
             item.setToolTip(tooltip)
         self.table.setItem(row, _INDEX_OF[key], item)
@@ -316,19 +316,11 @@ def _signed(value: float | None, decimals: int) -> str:
     return f"{value:+.{decimals}f}"
 
 
-def _delta_colour(value: float | None, *, higher_is_better: bool) -> str | None:
-    """Green where the lap on screen is better, red where it is worse."""
-    if value is None or not np.isfinite(value) or value == 0.0:
-        return None
-    better = value > 0 if higher_is_better else value < 0
-    return theme.COLOUR_THROTTLE if better else theme.COLOUR_BRAKE
-
-
-def _coasting_colour(seconds: float) -> str | None:
+def _coasting_tone(seconds: float) -> theme.Tone | None:
     """Flag a corner where the car spent real time on neither pedal.
 
     A tenth is the transition between the pedals and is unavoidable. Beyond
     about a quarter of a second the driver is waiting rather than transferring,
     and that is time given away for nothing.
     """
-    return theme.WARNING if seconds >= 0.25 else None
+    return theme.Tone.WARNING if seconds >= 0.25 else None

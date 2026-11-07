@@ -265,18 +265,18 @@ class ConsistencyPanel(QtWidgets.QWidget):
             self._set(row, COLUMN_LAPS, str(corner.n_laps))
             self._set(
                 row, COLUMN_BRAKING_STD, f"{corner.braking_point_std_m:.1f}",
-                colour=_warn(corner.braking_point_std_m, braking_limit),
+                tone=_warn(corner.braking_point_std_m, braking_limit),
             )
             self._set(
                 row, COLUMN_SPEED_STD, f"{corner.minimum_speed_std_kmh:.1f}",
-                colour=_warn(corner.minimum_speed_std_kmh, speed_limit),
+                tone=_warn(corner.minimum_speed_std_kmh, speed_limit),
             )
             self._set(row, COLUMN_THROTTLE_STD,
                       f"{corner.throttle_point_std_m:.1f}")
             self._set(
                 row, COLUMN_TIME_LOST, f"{corner.estimated_time_lost_s:.3f}",
                 # The worst corner is first, by construction.
-                colour=theme.WARNING if row == 0 and
+                tone=theme.Tone.WARNING if row == 0 and
                 corner.estimated_time_lost_s > 0 else None,
                 tooltip=strings.CONSISTENCY_TOOLTIP_TIME_LOST,
             )
@@ -292,7 +292,7 @@ class ConsistencyPanel(QtWidgets.QWidget):
         text: str,
         *,
         align_left: bool = False,
-        colour: str | None = None,
+        tone: theme.Tone | None = None,
         tooltip: str | None = None,
     ) -> None:
         item = QtWidgets.QTableWidgetItem(text)
@@ -301,8 +301,8 @@ class ConsistencyPanel(QtWidgets.QWidget):
                 QtCore.Qt.AlignmentFlag.AlignRight
                 | QtCore.Qt.AlignmentFlag.AlignVCenter
             )
-        if colour is not None:
-            item.setForeground(QtGui.QColor(colour))
+        if tone is not None:
+            item.setForeground(QtGui.QColor(theme.tone_colour(tone)))
         if tooltip is not None:
             item.setToolTip(tooltip)
         self.table.setItem(row, column, item)
@@ -331,7 +331,7 @@ class ConsistencyPanel(QtWidgets.QWidget):
         if corner is None:
             self._series.setData([], [])
             self.plot.setTitle(strings.CONSISTENCY_PLOT_EMPTY,
-                               color=theme.TEXT_MUTED, size="9pt")
+                               color=theme.TEXT_MUTED, size=theme.PLOT_TEXT_SIZE)
             return
 
         metric = METRICS[max(self.metric_selector.currentIndex(), 0)]
@@ -362,7 +362,7 @@ class ConsistencyPanel(QtWidgets.QWidget):
             strings.CONSISTENCY_PLOT_TITLE.format(
                 corner=corner.corner_label, mean=mean, std=std
             ),
-            color=theme.TEXT_MUTED, size="9pt",
+            color=theme.TEXT_MUTED, size=theme.PLOT_TEXT_SIZE,
         )
         self.plot.enableAutoRange()
 
@@ -379,8 +379,8 @@ def _pattern_label(corner) -> str:
             else strings.CONSISTENCY_PATTERN_SCATTER)
 
 
-def _warn(value: float, threshold: float) -> str | None:
-    return theme.WARNING if value >= threshold else None
+def _warn(value: float, threshold: float) -> theme.Tone | None:
+    return theme.Tone.WARNING if value >= threshold else None
 
 
 def _excluded_text(excluded: dict) -> str:

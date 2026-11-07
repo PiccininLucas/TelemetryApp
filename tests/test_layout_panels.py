@@ -41,7 +41,10 @@ def qt_app():
 
 
 def _colour(label: QtWidgets.QLabel) -> str:
-    return label.styleSheet()
+    """The colour the label's text is actually drawn in, as the stylesheet left
+    it - not what some property says it should be."""
+    label.ensurePolished()
+    return label.palette().color(label.foregroundRole()).name()
 
 
 # --- formatting ---------------------------------------------------------------
@@ -98,9 +101,9 @@ def test_the_header_shows_the_lap_against_its_reference(qt_app):
 def test_a_faster_lap_is_green_and_a_slower_one_red(qt_app):
     header = SessionHeader()
     header.show_summary(_summary(delta_s=-0.3))
-    assert theme.COLOUR_THROTTLE in _colour(header.delta.value)
+    assert theme.GAIN == _colour(header.delta.value)
     header.show_summary(_summary(delta_s=+0.3))
-    assert theme.COLOUR_BRAKE in _colour(header.delta.value)
+    assert theme.LOSS == _colour(header.delta.value)
 
 
 def test_a_session_best_sector_is_marked_and_the_others_show_their_gap(qt_app):
@@ -108,10 +111,10 @@ def test_a_session_best_sector_is_marked_and_the_others_show_their_gap(qt_app):
     header.show_summary(_summary())
 
     s1, _s2, s3 = header.sectors
-    assert theme.TRACE_IDEAL in _colour(s1.value)
+    assert theme.BEST == _colour(s1.value)
     assert s1.value.text() == "37.385"
     assert s3.value.text() == "38.085  +0.246"
-    assert theme.TRACE_IDEAL not in _colour(s3.value)
+    assert _colour(s3.value) == theme.TEXT
 
 
 def test_no_comparison_is_said_rather_than_left_blank(qt_app):
@@ -199,7 +202,7 @@ def test_best_sectors_are_coloured(qt_app):
     laps = LapList()
     laps.show_laps(_laps())
     table = laps.table
-    best_colour = theme.TRACE_IDEAL.lower()
+    best_colour = theme.BEST.lower()
     assert table.item(3, COLUMN_S1).foreground().color().name() == best_colour
     assert table.item(2, COLUMN_S2).foreground().color().name() == best_colour
     assert table.item(1, COLUMN_S1).foreground().color().name() != best_colour
@@ -292,9 +295,9 @@ def test_the_comparison_is_coloured_by_who_was_better(qt_app):
     card = CornerDetail()
     card.show_rows(_rows(), comparing=True, has_ideal=True)
     assert card.values["time_delta"].text() == "+0.120 s"
-    assert theme.COLOUR_BRAKE in card.values["time_delta"].styleSheet()
+    assert theme.LOSS == _colour(card.values["time_delta"])
     card.select_corner_at(910.0)
-    assert theme.COLOUR_THROTTLE in card.values["time_delta"].styleSheet()
+    assert theme.GAIN == _colour(card.values["time_delta"])
 
 
 def test_without_a_comparison_the_card_says_so(qt_app):

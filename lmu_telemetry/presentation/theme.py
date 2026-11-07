@@ -25,10 +25,36 @@ Qt's palette, so both have to be set.
 
 from __future__ import annotations
 
+import html
+import math
 from dataclasses import dataclass
+from enum import StrEnum
 
 import pyqtgraph as pg
 from PySide6 import QtGui, QtWidgets
+
+
+@dataclass(frozen=True, slots=True)
+class TypeScale:
+    """Font sizes, in pixels, smallest first.
+
+    Six steps and no more: a size outside this list is a size nobody chose. The
+    panels name a step, never a number, so the whole interface scales from here.
+    """
+
+    #: Marks drawn among other marks on a plot - the turn numbers on the map,
+    #: where four labels can sit within a few pixels of each other.
+    micro: int
+    #: The caption over a figure, a section rule inside a card.
+    caption: int
+    #: Column headers, dock titles, plot titles.
+    label: int
+    #: Everything else.
+    body: int
+    #: A figure in the session header.
+    stat: int
+    #: The one line that names what is open.
+    title: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +81,7 @@ class Palette:
     pad: tuple[int, int]
     font_ui: str
     font_display: str
+    sizes: TypeScale
 
 
 #: Night stint: ink-violet surfaces, rounded, one violet accent.
@@ -69,6 +96,7 @@ PALETTE = Palette(
     radius=8, pad=(7, 12),
     font_ui='"Segoe UI Variable Text", "Segoe UI", "Helvetica Neue", Arial, sans-serif',
     font_display='"Bahnschrift", "Segoe UI Semibold", sans-serif',
+    sizes=TypeScale(micro=10, caption=11, label=12, body=13, stat=15, title=17),
 )
 
 # --- Semantic roles ---------------------------------------------------------
@@ -89,6 +117,11 @@ ACCENT = PALETTE.accent
 WARNING = "#f0b132"
 ERROR = "#e5484d"
 
+#: The type scale, by step: `TYPE.caption`, `TYPE.body`...
+TYPE = PALETTE.sizes
+#: Text pyqtgraph draws itself (plot titles), as the CSS size it expects.
+PLOT_TEXT_SIZE = f"{TYPE.label}px"
+
 # --- Data colours (fixed: they are not part of the palette) -----------------
 #: Trace colours. The first two are the reference and comparison laps, chosen to
 #: stay distinguishable for the most common form of colour blindness - a
@@ -104,12 +137,36 @@ COLOUR_BRAKE = "#e5484d"
 COLOUR_THROTTLE = "#30c48d"
 COLOUR_COAST = "#9aa0a8"
 
-#: Fill under the delta-t curve. Red where the lap is behind the reference,
-#: green where it is ahead - the one place in the interface where a red/green
-#: pair is used, because the sign is also given by which side of zero the fill
-#: sits on, so the colour is never the only cue.
-FILL_LOSS = (229, 72, 77, 70)
-FILL_GAIN = (48, 196, 141, 70)
+#: Better and worse than the reference. They reuse the pedal hues - green is
+#: the car going, red is time spent - and are the only red/green pair in the
+#: interface. Every place that uses them also prints the sign (or puts the fill
+#: on one side of zero), so the colour is never the only cue.
+GAIN = "#30c48d"
+LOSS = "#e5484d"
+#: The session's best lap and best sectors: the ideal lap's colour, because the
+#: ideal lap is made of exactly these.
+BEST = TRACE_IDEAL
+
+#: Loss classes from `analysis.delta.loss_classes`, for the track map: two
+#: steps each way. Neutral is deliberately dim - most of a lap is neutral, and a
+#: bright neutral would drown out the few stretches worth looking at.
+LOSS_SCALE: dict[int, str] = {
+    -2: "#ff4d52",
+    -1: "#a8383c",
+    0: "#4a5058",
+    +1: "#2a8f68",
+    +2: "#3ce09f",
+}
+
+
+def _rgb(hex_colour: str) -> tuple[int, int, int]:
+    value = hex_colour.lstrip("#")
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+
+
+#: Fill under the delta-t curve: the loss and gain colours, translucent.
+FILL_LOSS = (*_rgb(LOSS), 70)
+FILL_GAIN = (*_rgb(GAIN), 70)
 
 GRID_ALPHA = 0.15
 
@@ -118,6 +175,89 @@ GRID_ALPHA = 0.15
 #: traces at different left edges and destroy the vertical alignment that makes
 #: reading a braking point across rows possible.
 AXIS_WIDTH = 62
+
+
+# --- Tones: what a coloured figure means ------------------------------------
+
+
+class Tone(StrEnum):
+    """Why a figure is coloured.
+
+    Panels say what a value *means* - better, worse, best, worth a look, not
+    comparable - and the theme decides what that looks like. On a label the tone
+    is a dynamic property the stylesheet reads (`set_tone`); on a table or tree
+    item, which a stylesheet cannot reach, it is a foreground (`tone_colour`).
+    """
+
+    GAIN = "gain"
+    LOSS = "loss"
+    BEST = "best"
+    WARNING = "warning"
+    DIM = "dim"
+
+
+TONE_COLOURS: dict[Tone, str] = {
+    Tone.GAIN: GAIN,
+    Tone.LOSS: LOSS,
+    Tone.BEST: BEST,
+    Tone.WARNING: WARNING,
+    Tone.DIM: TEXT_DISABLED,
+}
+
+
+def verdict(value: float | None, *, higher_is_better: bool) -> Tone | None:
+    """Gain where the lap on screen is better than its reference, loss where worse.
+
+    The one rule for every delta in the interface - the corner table, the corner
+    card, the header and the trace readout - so they can never disagree. Zero,
+    missing and non-finite values are no verdict at all.
+    """
+    if value is None or not math.isfinite(value) or value == 0.0:
+        return None
+    better = value > 0 if higher_is_better else value < 0
+    return Tone.GAIN if better else Tone.LOSS
+
+
+def tone_colour(tone: Tone | None, default: str = TEXT) -> str:
+    """The colour of a tone, or `default` for no tone."""
+    return default if tone is None else TONE_COLOURS[tone]
+
+
+def set_tone(widget: QtWidgets.QWidget, tone: Tone | None) -> None:
+    """Give a label a tone; `None` returns it to its role's colour.
+
+    Qt does not restyle a widget when a property the stylesheet selects on
+    changes, so the widget is re-polished here.
+    """
+    value = "" if tone is None else tone.value
+    if widget.property("tone") == value:
+        return
+    widget.setProperty("tone", value)
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+
+
+def emphasised(font: QtGui.QFont) -> QtGui.QFont:
+    """The weight for a row that stands above its neighbours: a track heading,
+    the best lap."""
+    font.setWeight(QtGui.QFont.Weight.DemiBold)
+    return font
+
+
+def font(size_px: int) -> QtGui.QFont:
+    """A font at one step of `TYPE`, for text drawn on a plot, which no
+    stylesheet reaches."""
+    result = QtGui.QFont()
+    result.setPixelSize(size_px)
+    return result
+
+
+def rich(text: str, colour: str, *, italic: bool = False) -> str:
+    """Coloured rich text for a `QLabel`: legends and readouts that mix colours
+    in one line, which a stylesheet cannot do."""
+    style = f"color:{colour}" + (";font-style:italic" if italic else "")
+    return f'<span style="{style}">{html.escape(text)}</span>'
 
 
 def apply(app: QtWidgets.QApplication) -> None:
@@ -177,6 +317,8 @@ def _stylesheet(d: Palette) -> str:
     lets a panel be a card without every label inside it carrying a background.
     """
     r = d.radius
+    t = d.sizes
+    warning_tint = f"rgba({', '.join(map(str, _rgb(WARNING)))}, 0.12)"
     py, px = d.pad
     tint = f"rgba({d.accent_rgb}, 0.18)"
     tint_hover = f"rgba({d.accent_rgb}, 0.10)"
@@ -185,7 +327,7 @@ def _stylesheet(d: Palette) -> str:
         background-color: transparent;
         color: {d.text};
         font-family: {d.font_ui};
-        font-size: 13px;
+        font-size: {t.body}px;
     }}
     QMainWindow, QDialog, QMessageBox {{
         background-color: {d.background};
@@ -208,7 +350,7 @@ def _stylesheet(d: Palette) -> str:
         padding: {py + 2}px {px}px;
         text-align: left;
         font-family: {d.font_display};
-        font-size: 12px;
+        font-size: {t.label}px;
     }}
     QDockWidget::close-button, QDockWidget::float-button {{
         background: transparent;
@@ -341,7 +483,7 @@ def _stylesheet(d: Palette) -> str:
         border-bottom: 1px solid {d.border};
         padding: {py}px {px - 2}px;
         font-family: {d.font_display};
-        font-size: 12px;
+        font-size: {t.label}px;
     }}
 
     /* Controls. */
@@ -434,7 +576,7 @@ def _stylesheet(d: Palette) -> str:
 
     /* Roles set from code with `setProperty("role", ...)`. */
     QLabel[role="warning"] {{
-        background-color: rgba(240, 177, 50, 0.12);
+        background-color: {warning_tint};
         color: {WARNING};
         border: 1px solid {WARNING};
         border-radius: {r}px;
@@ -465,21 +607,21 @@ def _stylesheet(d: Palette) -> str:
     QLabel[role="title"] {{
         color: {d.text};
         font-family: {d.font_display};
-        font-size: 17px;
+        font-size: {t.title}px;
     }}
     QLabel[role="caption"] {{
         color: {d.text_muted};
-        font-size: 11px;
+        font-size: {t.caption}px;
     }}
     QLabel[role="stat"] {{
         color: {d.text};
         font-family: {d.font_display};
-        font-size: 15px;
+        font-size: {t.stat}px;
     }}
     QLabel[role="section"] {{
         color: {d.text_muted};
         font-family: {d.font_display};
-        font-size: 11px;
+        font-size: {t.caption}px;
         padding: 8px 0 3px 0;
         border-bottom: 1px solid {d.border};
     }}
@@ -487,4 +629,13 @@ def _stylesheet(d: Palette) -> str:
         background-color: {d.border};
         border: none;
     }}
-    """
+    """ + _tone_rules()
+
+
+def _tone_rules() -> str:
+    """One rule per tone. Last in the sheet so a tone wins over a label's role,
+    which selects with the same specificity."""
+    return "".join(
+        f'\n    QLabel[tone="{tone.value}"] {{ color: {colour}; }}'
+        for tone, colour in TONE_COLOURS.items()
+    ) + "\n"

@@ -2,13 +2,19 @@
 titulo: Tokens e tema
 resumo: Estruturar cores, tipografia e espaçamento em tokens e centralizar todo o estilo no tema.
 ordem: 1
-status: em-andamento
+status: concluida
 risco: baixo
 arquivos:
   - lmu_telemetry/presentation/theme.py
   - lmu_telemetry/presentation/chart_panel.py
   - lmu_telemetry/presentation/corner_table.py
   - lmu_telemetry/presentation/session_browser.py
+  - lmu_telemetry/presentation/track_map.py
+  - lmu_telemetry/presentation/lap_list.py
+  - lmu_telemetry/presentation/corner_detail.py
+  - lmu_telemetry/presentation/session_header.py
+  - lmu_telemetry/presentation/consistency_panel.py
+  - tests/test_theme.py
 ---
 
 ## Escopo
@@ -38,17 +44,17 @@ Contrastes medidos sobre o painel: texto 15,1:1, texto secundário 7,2:1, acento
 ## Tarefas
 
 1. ~~Separar tokens em duas camadas~~ **Feito.** `Palette` (ingredientes) e papéis semânticos (`BACKGROUND`, `SURFACE`, `ACCENT`, `PLOT_BACKGROUND`...). As cores dos dados ficam fora da paleta.
-2. Definir família tipográfica, escala de tamanhos e espaçamentos. **Parcial.** Famílias e espaçamento dos controles estão na paleta; falta uma escala de tamanhos formal (hoje 13 px no corpo e 12 px nos títulos).
-3. Mover para o tema todo estilo espalhado nos painéis. **Parcial.** Fundo dos gráficos e preenchimentos azuis agora vêm do tema. Ainda fora dele: spans HTML do `chart_panel.py`, as cores de célula do `corner_table.py` e a fonte em negrito do `session_browser.py`.
+2. ~~Definir família tipográfica, escala de tamanhos e espaçamentos~~ **Feito (07/11/2026).** `TypeScale` na paleta, com seis passos em pixels: `micro` 10 (números das curvas no mapa), `caption` 11, `label` 12 (cabeçalhos e títulos), `body` 13, `stat` 15 e `title` 17. Todo `font-size` do QSS é um passo da escala; o texto que o pyqtgraph desenha usa `PLOT_TEXT_SIZE` ou `theme.font(passo)`.
+3. ~~Mover para o tema todo estilo espalhado nos painéis~~ **Feito (07/11/2026).** Os painéis agora dizem o que um número *significa*, e o tema decide como ele aparece: `Tone` (ganho, perda, melhor, aviso, esmaecido). A regra "verde se melhor, vermelho se pior", antes repetida em quatro painéis com as cores de pedal, virou `theme.verdict`. Nos rótulos, o tom é uma propriedade dinâmica lida pelo QSS (`set_tone`), no lugar de `setStyleSheet` inline; nas células, uma cor de primeiro plano (`tone_colour`). A escala de perda do mapa (`LOSS_SCALE`), o negrito (`emphasised`), os spans HTML (`rich`) e o tom do aviso também foram para o tema. A aparência não mudou: a captura da janela com o demo é idêntica pixel a pixel à de antes.
 4. ~~Ampliar o QSS~~ **Feito.** Docks, barra de ferramentas, abas (sublinhado), árvores e tabelas, combos, botões, barras de rolagem, menus e dicas.
 5. ~~Trocar tema claro/escuro~~ **Descartado** na etapa 0: só escuro.
 
 ## Critério de pronto
 
-- Nenhum literal de cor fora de `theme.py`. **Não atingido:** restam as cores de dado do mapa (`track_map.py`) e as células da tabela.
+- Nenhum literal de cor fora de `theme.py`. **Feito e testado:** `tests/test_theme.py` varre cada módulo de `presentation/` e falha com um literal de cor ou um `setStyleSheet`. A paleta de impressão de `infrastructure/export/` (papel branco) fica separada de propósito.
 - `pyqtgraph` e widgets Qt leem os mesmos tokens. **Feito.**
 - Contraste mínimo de 4,5:1 para texto normal. **Feito e testado** (`tests/test_theme.py`).
-- O par referência/comparação continua distinguível por daltonismo. **Parcial.** O par é o azul/laranja, o clássico seguro, e o teste garante que as matizes ficam afastadas. Não há simulação de daltonismo.
+- O par referência/comparação continua distinguível por daltonismo. **Feito e testado.** Simulação de protanopia, deuteranopia e tritanopia (Machado 2009, severidade total): o par azul/laranja fica a ΔE 84 ou mais (CIE76) nas três, e o teste exige 40. O par ganho/perda cai para ~28 em protan/deutan, mas ali o sinal impresso (ou o lado do zero) é sempre a outra pista.
 
 ## Riscos
 
@@ -59,7 +65,10 @@ Contrastes medidos sobre o painel: texto 15,1:1, texto secundário 7,2:1, acento
 - Tema: só escuro, refinado, sem alternância (etapa 0).
 - Direção Violeta, com fontes do sistema em vez de embutidas. Se o app for distribuído para outros sistemas, vale reavaliar embutir uma família.
 
-## Decisões em aberto
+- Escala tipográfica de seis passos em pixels, não em pontos: a interface é desenhada para tela e o pyqtgraph aceita px direto.
+- Tons em vez de cores nos painéis: um painel nunca escolhe uma cor, só o significado.
 
-- Escala tipográfica formal.
-- Mover as cores de dado restantes para o tema.
+## Fica para outras etapas
+
+- O navegador destaca a melhor volta com o acento violeta, e a lista de voltas com o tom `BEST`. Unificar é a tarefa 2 da etapa 3.
+- O mapa no modo perda/ganho usa vermelho/verde sem outra pista além da legenda. Rever junto com a etapa 4.
