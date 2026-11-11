@@ -185,35 +185,51 @@ def test_browser_shows_a_placeholder_when_the_catalog_is_empty(
     assert browser.placeholder.isVisible() or not browser.tree.isVisible()
 
 
-def test_browser_groups_by_track_then_car_then_session(
-    qt_app, catalog_with_sessions
-):
+def test_browser_groups_sessions_by_track_and_car(qt_app, catalog_with_sessions):
     """Laps are only comparable within one track and one car, so that is the
-    order that puts comparable things next to each other."""
+    group; the laps themselves live in the lap list, not here."""
     browser = SessionBrowser(build_gateways().catalog)
     assert browser.reload() == 2
 
     assert browser.tree.topLevelItemCount() == 1
-    track = browser.tree.topLevelItem(0)
-    assert track.text(0) == "Autodromo Nazionale Monza"
+    group = browser.tree.topLevelItem(0)
+    assert group.text(0) == strings.BROWSER_GROUP_LABEL.format(
+        track="Autodromo Nazionale Monza", car="DKR Engineering #4:ELMS25")
+    assert group.childCount() == 2
+    assert all(group.child(i).childCount() == 0 for i in range(2))
 
-    car = track.child(0)
-    assert car.text(0) == "DKR Engineering #4:ELMS25"
-    assert car.childCount() == 2  # two sessions
 
-    session = car.child(0)
-    assert session.childCount() in (2, 4)  # laps of whichever session sorts first
+def test_sessions_are_listed_newest_first(qt_app, catalog_with_sessions):
+    browser = SessionBrowser(build_gateways().catalog)
+    browser.reload()
+    group = browser.tree.topLevelItem(0)
+    assert group.child(0).text(0).startswith("2026-07-31")
+    assert group.child(1).text(0).startswith("2026-07-30")
 
 
 def test_browser_shows_each_session_s_best_lap(qt_app, catalog_with_sessions):
     browser = SessionBrowser(build_gateways().catalog)
     browser.reload()
 
-    car = browser.tree.topLevelItem(0).child(0)
-    session_times = {car.child(i).text(1) for i in range(car.childCount())}
+    group = browser.tree.topLevelItem(0)
+    times = {group.child(i).text(1) for i in range(group.childCount())}
+    assert times == {"1:47.200", "2:00.000"}
 
-    assert "1:47.200" in session_times  # the older session's best
-    assert "2:00.000" in session_times  # the newer session's only valid lap
+
+def test_the_best_time_is_in_the_best_tone(qt_app, catalog_with_sessions):
+    """The colour the lap list uses for the same fact - not the accent, which
+    is never a data colour."""
+    browser = SessionBrowser(build_gateways().catalog)
+    browser.reload()
+    session = browser.tree.topLevelItem(0).child(0)
+    assert session.foreground(1).color().name() == theme.BEST
+
+
+def test_group_headings_cannot_be_opened(qt_app, catalog_with_sessions):
+    browser = SessionBrowser(build_gateways().catalog)
+    browser.reload()
+    heading = browser.tree.topLevelItem(0)
+    assert not heading.flags() & QtCore.Qt.ItemFlag.ItemIsSelectable
 
 
 def test_default_selection_is_not_the_shortest_lap(qt_app, catalog_with_sessions):

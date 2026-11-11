@@ -59,6 +59,10 @@ class WindowActions(QtCore.QObject):
         }
         self.quit = self._action(strings.ACTION_QUIT, QtGui.QKeySequence.StandardKey.Quit)
 
+        # -- View: finding a session
+        self.find_session = self._action(
+            strings.ACTION_FIND_SESSION, QtGui.QKeySequence.StandardKey.Find)
+
         # -- View: axis
         axis_group = QtGui.QActionGroup(self)
         self.axis_distance = self._checkable(strings.ACTION_AXIS_DISTANCE, axis_group,
@@ -162,6 +166,8 @@ class WindowActions(QtCore.QObject):
         file_menu.addAction(self.quit)
 
         view_menu = menu_bar.addMenu(strings.MENU_VIEW)
+        view_menu.addAction(self.find_session)
+        view_menu.addSeparator()
         view_menu.addActions([self.axis_distance, self.axis_time])
         view_menu.addSeparator()
         view_menu.addMenu(strings.MENU_CHANNELS).addActions(list(self.channels.values()))

@@ -70,5 +70,5 @@ Contrastes medidos sobre o painel: texto 15,1:1, texto secundário 7,2:1, acento
 
 ## Fica para outras etapas
 
-- O navegador destaca a melhor volta com o acento violeta, e a lista de voltas com o tom `BEST`. Unificar é a tarefa 2 da etapa 3.
+- ~~O navegador destaca a melhor volta com o acento violeta, e a lista de voltas com o tom `BEST`.~~ Unificado na etapa 3: os dois usam `BEST`.
 - O mapa no modo perda/ganho usa vermelho/verde sem outra pista além da legenda. Rever junto com a etapa 4.

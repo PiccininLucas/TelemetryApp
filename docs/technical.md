@@ -477,8 +477,23 @@ A summary strip across the top, the traces in the centre, and everything else a
   time, S1–S3, gap to the best, status. Best lap and best sectors are computed among
   **comparable** laps only (`best_lap`, `best_sectors`); non-comparable laps are
   listed but dimmed; the reference lap is tagged `ref`. Picking a row calls
-  `SessionBrowser.select_lap`, so a lap is always opened through the tree and the
-  two never disagree.
+  `SessionBrowser.select_lap`, so a lap is always opened through the browser and
+  the two never disagree.
+- **`SessionBrowser`** (`session_browser.py`) — *which session*; the lap list
+  answers *which lap of it*. Search (every word, any order, case- and
+  accent-insensitive, over track, car, class, type, date, weather) and three
+  filter combos (track; car, narrowed to the chosen track; session type) over a
+  list grouped by **track · car** — the unit laps are comparable in — groups and
+  sessions newest first. A session row: date · type, best comparable lap in the
+  `BEST` tone, lap count; dimmed when no lap is comparable; tagged `ref` when it
+  holds the pinned reference (`mark_reference`). Choosing a session opens its best
+  comparable lap (or its first lap when none is comparable); coming back to the
+  open session keeps the lap on screen. Empty catalog → *Importar sessão…* /
+  *Importar pasta…* buttons (`import_requested`, `import_folder_requested`); no
+  match → *Limpar filtros*. Keyboard: Ctrl+F (`commands.find_session`, reopens the
+  dock) → search; Down/Enter → list (opening the first match); Esc clears; arrows
+  skip group headings (`_SessionList.moveCursor`). Matching is the pure
+  `session_matches(SessionRow, BrowserFilter)`.
 - **`CornerDetail`** (`corner_detail.py`) — the corner under the cursor, figures
   labelled in words: this lap, against the reference, against the ideal lap. Picks
   the corner by nearest apex, the same rule as `CornerTable.select_corner_at`.
@@ -608,7 +623,8 @@ literal and no `setStyleSheet`**. The print palette in `infrastructure/export/`
   **car** is allowed with a warning.
 - The ideal lap chart shows **speed only** — it has no pedal/steering trace
   because nobody drove it.
-- Dimmed (not hidden) laps in the browser: partial/invalidated/pit laps.
+- Dimmed (not hidden): partial/invalidated/pit laps in the lap list, and sessions
+  with no comparable lap in the browser.
 
 ### Other UI facts
 

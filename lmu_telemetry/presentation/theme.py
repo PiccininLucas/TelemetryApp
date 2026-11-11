@@ -511,11 +511,16 @@ def _stylesheet(d: Palette) -> str:
     }}
     QLineEdit {{
         background-color: {d.raised};
-        border: 1px solid {d.accent};
+        border: 1px solid {d.border};
         border-radius: {max(r - 2, 1)}px;
-        padding: 2px 6px;
+        padding: {max(py - 3, 2)}px 8px;
+        min-height: 18px;
         selection-background-color: {d.accent};
         selection-color: {d.on_accent};
+    }}
+    /* An editor inside a table always has focus, so it keeps the accent. */
+    QLineEdit:focus {{
+        border-color: {d.accent};
     }}
     QPushButton {{
         background-color: {d.raised};

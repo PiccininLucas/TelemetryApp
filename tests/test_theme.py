@@ -102,7 +102,8 @@ def test_text_meets_aa_on_every_surface(text, ground):
 
 
 def test_the_accent_meets_aa_on_panels_because_it_is_used_as_text():
-    """The session browser draws a few labels in the accent."""
+    """The accent can carry text - a checked toolbar button, a focused field -
+    so it must be readable on a panel."""
     assert contrast(theme.ACCENT, theme.SURFACE) >= AA
 
 

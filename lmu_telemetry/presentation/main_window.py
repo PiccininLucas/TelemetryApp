@@ -212,6 +212,7 @@ class MainWindow(QtWidgets.QMainWindow):
         commands.integrated.toggled.connect(self.track_map.set_integrated_visible)
         commands.comparison_chosen.connect(self.set_comparison_mode)
         commands.pin.triggered.connect(self.pin_current_lap)
+        commands.find_session.triggered.connect(self.find_session)
 
         self.importer.busy_changed.connect(
             lambda busy: commands.set_import_enabled(not busy))
@@ -220,6 +221,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exporter.status.connect(self.status.notify)
 
         self.browser.lap_selected.connect(self.show_lap)
+        self.browser.import_requested.connect(self.import_session)
+        self.browser.import_folder_requested.connect(self.import_folder)
         self.lap_list.lap_chosen.connect(self._on_lap_chosen)
         self.corner_table.corner_selected.connect(self._on_cursor_moved)
         self.corner_table.corner_zoomed.connect(self.chart.zoom_to)
@@ -365,6 +368,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self, strings.DIALOG_IMPORT_FAILED_TITLE, "\n".join(failures[:10])
             )
 
+    def find_session(self) -> None:
+        """Ctrl+F: to the session search, bringing its panel back if hidden."""
+        self.dock_sessions.show()
+        self.dock_sessions.raise_()
+        self.browser.focus_search()
+
     # -- comparison --------------------------------------------------------
 
     def set_comparison_mode(self, mode: ComparisonMode) -> None:
@@ -383,6 +392,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._selection is None:
             return
         self._pinned = self._selection
+        self.browser.mark_reference(self._pinned)
         self.set_comparison_mode(ComparisonMode.PINNED)
         self.status.notify(
             strings.STATUS_REFERENCE_PINNED.format(number=self._selection.lap_number)

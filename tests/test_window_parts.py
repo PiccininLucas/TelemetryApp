@@ -16,7 +16,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
-from PySide6 import QtCore, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 from lmu_telemetry.presentation import lap_view, theme  # noqa: E402
 from lmu_telemetry.presentation.chart_panel import AxisMode  # noqa: E402
@@ -365,3 +365,28 @@ def test_the_pdf_context_follows_what_is_drawn(demo_window):
     # A comparison is on screen, so the map is coloured by loss, as on screen.
     assert context.map_scheme == "loss"
     assert context.corner_rows == window._current.corner_rows
+
+
+def test_find_session_brings_the_search_back(demo_window):
+    """Ctrl+F reaches the search even with the sessions panel closed."""
+    window = demo_window
+    window.dock_sessions.close()
+    window.commands.find_session.trigger()
+    assert not window.dock_sessions.isHidden()
+    assert window.browser.focusWidget() is window.browser.search
+    assert window.commands.find_session.shortcut().matches(
+        QtGui.QKeySequence(QtGui.QKeySequence.StandardKey.Find)
+    ) == QtGui.QKeySequence.SequenceMatch.ExactMatch
+
+
+def test_pinning_marks_the_session_in_the_browser(demo_window):
+    from lmu_telemetry.presentation.session_browser import KIND_SESSION, ROLE_KIND
+
+    window = demo_window
+    window.pin_current_lap()
+    sessions = [
+        window.browser.tree.topLevelItem(0).child(i)
+        for i in range(window.browser.tree.topLevelItem(0).childCount())
+        if window.browser.tree.topLevelItem(0).child(i).data(0, ROLE_KIND) == KIND_SESSION
+    ]
+    assert any(item.text(0).endswith(strings.BROWSER_MARK_REFERENCE) for item in sessions)
