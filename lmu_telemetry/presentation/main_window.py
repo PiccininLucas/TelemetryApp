@@ -177,6 +177,7 @@ class MainWindow(QtWidgets.QMainWindow):
         commands = self.commands = WindowActions(self, self.docks, enabled_rows)
         commands.show_comparison(self._mode)
         commands.build_menus(self.menuBar())
+        self.chart.set_channel_actions(commands.channels)
 
         self.toolbar = commands.build_toolbar()
         self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.toolbar)

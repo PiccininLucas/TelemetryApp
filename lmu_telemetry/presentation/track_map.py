@@ -7,14 +7,21 @@ work the driver should not have to do.
 
 **Two colourings, because there are two questions.**
 
-- *Pedals* — braking red, coasting grey, throttle green. Coasting is the one
+- *Pedals* — braking red and thick, coasting grey and dashed, throttle green
+  and thin. Coasting is the one
   that matters: as a number it is 2% of a lap and easy to dismiss, and as a
   stretch of tarmac between the brake release and the throttle it is obviously
   a corner entered too slowly or a brake released too early.
 - *Gain and loss* — where the compared lap is gaining or losing against its
   reference. Coloured by the **slope** of the delta, never its value: colouring
   by value paints the whole second half of the lap red because of one mistake
-  at turn one.
+  at turn one. Losing is a solid line, thicker the faster time goes; gaining
+  is dashed.
+
+**Colour is never the only cue.** Red and green are the pair the commonest
+colour blindness confuses, and both colourings rest on them. So every class
+also has its own width and dash, and the key under the map draws each line
+exactly as it is drawn on the circuit.
 
 Both are integer classes, so the path is drawn as runs of constant colour -
 one polyline per run. That keeps a 13 600-point Le Mans lap to a few hundred
@@ -33,8 +40,9 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
 
+from lmu_telemetry.presentation import plotting, theme
+from lmu_telemetry.presentation.chart_widgets import LineKey, LineStyle
 from lmu_telemetry.shared import strings
-from lmu_telemetry.presentation import theme
 
 
 class MapColour(str, Enum):
@@ -46,16 +54,33 @@ class MapColour(str, Enum):
     DELTA = "delta"
 
 
-#: Colour of each pedal class, keyed by the value `trackmap.pedal_state`
-#: returns.
-PEDAL_COLOURS: dict[int, str] = {
-    -1: theme.COLOUR_BRAKE,
-    0: theme.COLOUR_COAST,
-    +1: theme.COLOUR_THROTTLE,
+#: How each pedal class is drawn, keyed by the value `trackmap.pedal_state`
+#: returns. Braking stands out by width as well as colour; coasting - the
+#: class worth finding - is the only dashed one.
+PEDAL_STYLES: dict[int, LineStyle] = {
+    -1: LineStyle(theme.COLOUR_BRAKE, 3.6),
+    0: LineStyle(theme.COLOUR_COAST, 2.4, dashed=True),
+    +1: LineStyle(theme.COLOUR_THROTTLE, 2.4),
 }
 
-#: Colour of each loss class from `analysis.delta.loss_classes`.
-LOSS_COLOURS: dict[int, str] = theme.LOSS_SCALE
+#: How each loss class from `analysis.delta.loss_classes` is drawn: losing
+#: solid and thicker the faster time goes, gaining dashed. Neutral is dim but
+#: as wide as a plain path - it is most of the lap, and it is what draws the
+#: circuit's shape; the classes that matter are wider than it, not it thinner.
+LOSS_STYLES: dict[int, LineStyle] = {
+    -2: LineStyle(theme.LOSS_SCALE[-2], 4.2),
+    -1: LineStyle(theme.LOSS_SCALE[-1], 3.2),
+    0: LineStyle(theme.LOSS_SCALE[0], 2.4),
+    +1: LineStyle(theme.LOSS_SCALE[+1], 2.4, dashed=True),
+    +2: LineStyle(theme.LOSS_SCALE[+2], 3.2, dashed=True),
+}
+
+#: The colours alone, for anything that only needs those.
+PEDAL_COLOURS: dict[int, str] = {k: v.colour for k, v in PEDAL_STYLES.items()}
+LOSS_COLOURS: dict[int, str] = {k: v.colour for k, v in LOSS_STYLES.items()}
+
+#: Unclassified path: no colouring available for this mode.
+PLAIN_STYLE = LineStyle(theme.TEXT_MUTED, 2.4)
 
 #: Legend entries per mode: (class value, label).
 PEDAL_LEGEND = (
@@ -95,11 +120,7 @@ class TrackMap(QtWidgets.QWidget):
         layout.setSpacing(0)
 
 
-        self.plot = pg.PlotWidget()
-        self.plot.setBackground(theme.PLOT_BACKGROUND)
-        self.plot.setMenuEnabled(False)
-        self.plot.hideAxis("left")
-        self.plot.hideAxis("bottom")
+        self.plot = plotting.make_plot(axes=False)
         # A circuit stretched to fill the panel is not a circuit.
         self.plot.setAspectLocked(True)
         layout.addWidget(self.plot, stretch=1)
@@ -132,9 +153,16 @@ class TrackMap(QtWidgets.QWidget):
         self._cursor.setVisible(False)
         self.plot.addItem(self._cursor)
 
-        self.legend = QtWidgets.QLabel()
-        self.legend.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        self.legend.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        # The key: each class's line drawn as it is on the circuit.
+        self.legend = QtWidgets.QWidget()
+        legend_layout = QtWidgets.QHBoxLayout(self.legend)
+        legend_layout.setContentsMargins(8, 4, 8, 0)
+        legend_layout.setSpacing(14)
+        legend_layout.addStretch(1)
+        self.legend_keys = [LineKey(PLAIN_STYLE) for _ in range(3)]
+        for key in self.legend_keys:
+            legend_layout.addWidget(key)
+        legend_layout.addStretch(1)
         layout.addWidget(self.legend)
 
         self.caption = QtWidgets.QLabel()
@@ -288,25 +316,22 @@ class TrackMap(QtWidgets.QWidget):
             return
 
         classes = self._classes.get(self._mode)
-        colours = (PEDAL_COLOURS if self._mode is MapColour.PEDALS
-                   else LOSS_COLOURS)
+        styles = PEDAL_STYLES if self._mode is MapColour.PEDALS else LOSS_STYLES
 
         if classes is None or len(classes) != len(self._x):
-            self._runs.append(
-                self.plot.plot(self._x, self._y,
-                               pen=pg.mkPen(theme.TEXT_MUTED, width=2))
-            )
+            self._runs.append(self.plot.plot(self._x, self._y, pen=PLAIN_STYLE.pen()))
         else:
             for start, end, value in _runs_of(classes):
                 # Extend each run by one point so consecutive runs share an
                 # endpoint; without it the path shows a gap at every colour
                 # change, which on a pedal map is every braking point.
                 stop = min(end + 1, len(self._x))
+                style = styles.get(int(value), PLAIN_STYLE)
                 self._runs.append(self.plot.plot(
-                    self._x[start:stop], self._y[start:stop],
-                    pen=pg.mkPen(colours.get(int(value), theme.TEXT_MUTED),
-                                 width=2.4),
+                    self._x[start:stop], self._y[start:stop], pen=style.pen(),
                 ))
+        # The path stays put while the cursor dot moves over it.
+        plotting.freeze(*self._runs)
 
         self._start.setData([self._x[0]], [self._y[0]])
         self._draw_corner_labels()
@@ -316,12 +341,9 @@ class TrackMap(QtWidgets.QWidget):
     def _update_legend(self) -> None:
         entries = (PEDAL_LEGEND if self._mode is MapColour.PEDALS
                    else LOSS_LEGEND)
-        colours = (PEDAL_COLOURS if self._mode is MapColour.PEDALS
-                   else LOSS_COLOURS)
-        self.legend.setText("   ".join(
-            f"{theme.rich('■', colours[value])} {label}"
-            for value, label in entries
-        ))
+        styles = PEDAL_STYLES if self._mode is MapColour.PEDALS else LOSS_STYLES
+        for key, (value, label) in zip(self.legend_keys, entries, strict=True):
+            key.set(styles[value], label)
 
     # -- cursor ------------------------------------------------------------
 

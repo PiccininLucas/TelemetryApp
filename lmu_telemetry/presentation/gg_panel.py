@@ -26,7 +26,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
 
 from lmu_telemetry.shared import strings
-from lmu_telemetry.presentation import theme
+from lmu_telemetry.presentation import plotting, theme
 
 
 class FrictionPanel(QtWidgets.QWidget):
@@ -45,17 +45,12 @@ class FrictionPanel(QtWidgets.QWidget):
         layout.setSpacing(0)
 
 
-        self.plot = pg.PlotWidget()
-        self.plot.setBackground(theme.PLOT_BACKGROUND)
-        self.plot.setMenuEnabled(False)
-        self.plot.setLabel("left", strings.GG_AXIS_LONGITUDINAL)
-        self.plot.setLabel("bottom", strings.GG_AXIS_LATERAL)
-        self.plot.showGrid(x=True, y=True, alpha=theme.GRID_ALPHA)
+        self.plot = plotting.make_plot(
+            left=strings.GG_AXIS_LONGITUDINAL, bottom=strings.GG_AXIS_LATERAL)
         # One g of braking must be as tall as one g of cornering, or a circular
         # envelope reads as an elliptical one.
         self.plot.setAspectLocked(True)
         for side in ("left", "bottom"):
-            self.plot.getAxis(side).enableAutoSIPrefix(False)
             self.plot.getAxis(side).setTickSpacing(major=1.0, minor=0.5)
         layout.addWidget(self.plot, stretch=1)
 
@@ -78,6 +73,9 @@ class FrictionPanel(QtWidgets.QWidget):
         self._hull = self.plot.plot(
             pen=pg.mkPen(theme.TRACE_COMPARISON, width=1.6)
         )
+        # 13 600 dots repainted under every cursor move otherwise.
+        plotting.freeze(self._points, self._hull)
+        plotting.freeze_axes(self.plot)
 
         self._cursor = pg.ScatterPlotItem(
             size=10, pen=pg.mkPen(theme.TEXT, width=2),

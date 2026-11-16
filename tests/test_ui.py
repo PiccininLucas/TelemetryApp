@@ -493,9 +493,9 @@ def test_cursor_readout_reports_both_laps(qt_app):
     chart.show_laps(make_trace("Volta 2", speed_ms=40.0),
                     make_trace("Volta 1", speed_ms=50.0))
 
-    text = chart._readout_text(100.0)
-    assert "100 m" in text
-    assert "144.0" in text and "180.0" in text
+    values = chart.readout_at(100.0)
+    assert values["position"] == ("100", None)
+    assert values["Ground Speed"] == ("144.0", "180.0")
 
 
 def test_chart_draws_a_full_le_mans_lap(qt_app, synthetic_lap):

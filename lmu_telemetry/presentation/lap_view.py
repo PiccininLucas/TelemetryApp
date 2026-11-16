@@ -162,6 +162,7 @@ def compose(
                 ),
                 grid_m=ideal.grid_m,
                 elapsed_s=ideal.elapsed_s,
+                key=strings.CHART_KEY_IDEAL,
                 # Only speed is stitched: the ideal lap has no pedal or steering
                 # trace, because no one ever drove it. Showing an invented one
                 # would be the first lie in the application.
@@ -180,6 +181,8 @@ def compose(
                     gap=format_gap(delta.final_delta_s),
                 ),
                 benchmark,
+                key=strings.CHART_KEY_BENCHMARK.format(
+                    number=benchmark_selection.lap_number),
             )
 
     primary_label = strings.CHART_LEGEND_PRIMARY.format(
@@ -216,7 +219,8 @@ def compose(
 
     figures = LapFigures(
         current=current,
-        primary_trace=_trace(primary_label, primary),
+        primary_trace=_trace(primary_label, primary, key=strings.CHART_KEY_PRIMARY.format(
+            number=selection.lap_number)),
         benchmark_trace=benchmark_trace,
         corner_marks=tuple(
             (corner.apex_distance_m, short_label(corner.label))
@@ -507,7 +511,7 @@ def ideal_summary(ideal: IdealLap | None) -> str:
     )
 
 
-def _trace(label: str, analysis: pipeline.LapAnalysis) -> LapTrace:
+def _trace(label: str, analysis: pipeline.LapAnalysis, *, key: str = "") -> LapTrace:
     """Turn an analysed lap into what the chart draws.
 
     The chart layer takes numpy arrays and a label, nothing else - that is what
@@ -518,4 +522,5 @@ def _trace(label: str, analysis: pipeline.LapAnalysis) -> LapTrace:
         grid_m=analysis.grid_m,
         elapsed_s=analysis.elapsed_s,
         channels=analysis.channels,
+        key=key,
     )

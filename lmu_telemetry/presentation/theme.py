@@ -25,7 +25,6 @@ Qt's palette, so both have to be set.
 
 from __future__ import annotations
 
-import html
 import math
 from dataclasses import dataclass
 from enum import StrEnum
@@ -238,6 +237,32 @@ def set_tone(widget: QtWidgets.QWidget, tone: Tone | None) -> None:
     style.polish(widget)
 
 
+#: Which trace a figure belongs to, for a label beside a chart: the readout's
+#: values and the keys take the colour of their curve. Keyed by name so the
+#: style sheet, not the label, holds the colour.
+SERIES_COLOURS: dict[str, str] = {
+    "primary": TRACE_REFERENCE,
+    "comparison": TRACE_COMPARISON,
+    "ideal": TRACE_IDEAL,
+    "throttle": COLOUR_THROTTLE,
+    "brake": COLOUR_BRAKE,
+}
+
+
+def set_series(widget: QtWidgets.QWidget, series: str | None) -> None:
+    """Colour a label as one of the chart's series (`SERIES_COLOURS`); None
+    returns it to its role's colour."""
+    value = series or ""
+    if value and value not in SERIES_COLOURS:
+        raise KeyError(series)
+    if widget.property("series") == value:
+        return
+    widget.setProperty("series", value)
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+
+
 def emphasised(font: QtGui.QFont) -> QtGui.QFont:
     """The weight for a row that stands above its neighbours: a track heading,
     the best lap."""
@@ -253,11 +278,15 @@ def font(size_px: int) -> QtGui.QFont:
     return result
 
 
-def rich(text: str, colour: str, *, italic: bool = False) -> str:
-    """Coloured rich text for a `QLabel`: legends and readouts that mix colours
-    in one line, which a stylesheet cannot do."""
-    style = f"color:{colour}" + (";font-style:italic" if italic else "")
-    return f'<span style="{style}">{html.escape(text)}</span>'
+def figures(font_: QtGui.QFont) -> QtGui.QFont:
+    """Tabular figures: every digit the same width, so a number that changes
+    under the cursor does not push its neighbours about. Most UI faces do this
+    by default; asking for it makes it true of whichever face is installed."""
+    try:
+        font_.setFeature(QtGui.QFont.Tag("tnum"), 1)
+    except (AttributeError, TypeError):  # Qt before 6.7 has no feature API
+        pass
+    return font_
 
 
 def apply(app: QtWidgets.QApplication) -> None:
@@ -425,6 +454,16 @@ def _stylesheet(d: Palette) -> str:
     }}
     QToolButton:disabled {{
         color: {d.text_disabled};
+    }}
+    /* Channel chips above the traces: small, outlined, filled when on. */
+    QToolButton[role="chip"] {{
+        border: 1px solid {d.border};
+        border-radius: {max(r - 3, 2)}px;
+        padding: 2px 8px;
+        font-size: {t.caption}px;
+    }}
+    QToolButton[role="chip"]:disabled {{
+        border-color: transparent;
     }}
     QStatusBar {{
         background-color: {d.background};
@@ -627,6 +666,7 @@ def _stylesheet(d: Palette) -> str:
         padding: 6px 12px;
     }}
     QScrollArea#header_scroll, QWidget#header_content,
+    QScrollArea#chart_chrome, QWidget#chart_chrome_content,
     QScrollArea#detail_scroll, QWidget#detail_content {{
         background: transparent;
         border: none;
@@ -656,7 +696,16 @@ def _stylesheet(d: Palette) -> str:
         background-color: {d.border};
         border: none;
     }}
-    """ + _tone_rules()
+    """ + _series_rules() + _tone_rules()
+
+
+def _series_rules() -> str:
+    """One rule per chart series, before the tones so a tone (gain, loss)
+    still wins on a value that has both."""
+    return "".join(
+        f'\n    QLabel[series="{name}"] {{ color: {colour}; }}'
+        for name, colour in SERIES_COLOURS.items()
+    )
 
 
 def _tone_rules() -> str:

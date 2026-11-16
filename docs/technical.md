@@ -141,7 +141,8 @@ lmu_telemetry/
   presentation/             PySide6
     main_window (composition only), lap_view, window_actions, exporting,
     session_state, import_worker, status_line, notice_banner, session_browser,
-    chart_panel, track_map, gg_panel, corner_table, consistency_panel, theme,
+    plotting, chart_widgets, chart_panel, track_map, gg_panel, corner_table,
+    consistency_panel, theme,
     session_header, lap_list, corner_detail
 scripts/                    CLI tools (section 2)
 tests/                      pytest suite + synthetic data builders
@@ -596,8 +597,10 @@ the single gain/loss rule shared by the corner table, the corner card, the heade
 and the trace readout. On a `QLabel` a tone is a dynamic property the style sheet
 selects on (`theme.set_tone`, which re-polishes); on a table or tree item, which no
 style sheet reaches, it is a foreground (`theme.tone_colour`). Other helpers:
-`theme.emphasised(font)` (the one emphasis weight), `theme.rich(text, colour)`
-(escaped coloured rich text for legends and readouts). Widgets are transparent by default; only the window,
+`theme.emphasised(font)` (the one emphasis weight), `theme.figures(font)`
+(tabular digits), and `theme.set_series(label, key)` - a figure coloured as the
+chart series it was read from (`SERIES_COLOURS`: primary, comparison, ideal,
+throttle, brake), again a style-sheet property. No panel builds HTML. Widgets are transparent by default; only the window,
 the panels (docks and the `#central` card) and the widgets Qt paints itself name a
 surface, which is what lets a panel be a card without every label carrying a
 background.
@@ -631,6 +634,33 @@ literal and no `setStyleSheet`**. The print palette in `infrastructure/export/`
 - `chart_panel.ROW_SPECS` is the single description of the stacked rows (speed,
   pedals, steering, gear, RPM, delta); `DEFAULT_ROWS` = speed, pedals, delta.
   Scales (m/s→km/h, fraction→%) are applied at this edge only.
+- **Every plot is made by `plotting.make_plot`**: themed background, quiet axes
+  (line in `BORDER`, numbers `TEXT_MUTED`, no tick marks, caption-size tabular
+  tick font, no SI prefix), grid, axis titles via `plotting.set_label`. The traces,
+  map, g-g and consistency chart all use it.
+- **Static layers are cached** (`plotting.freeze`, `DeviceCoordinateCache` on
+  curves, fills, scatters and axes; never on the cursor). Two things keep the
+  cache valid, and both are load-bearing: `plotting.reserve_cache` raises Qt's
+  global `QPixmapCache` from 10 MB to 64–256 MB by screen size (at 10 MB the rows
+  evicted each other and every move missed), and rows fit their Y range once per
+  lap (`chart_panel._fit_y`) instead of leaving pyqtgraph's auto-range on, which
+  re-applies the range on every paint and discards the caches. Pens are
+  **cosmetic** (`LineStyle.pen`): widths are pixels, not data units.
+  `scripts/bench_charts.py` (13 600 m lap, 6 rows, 2 laps + delta): cursor move
+  86 → 4 ms, repaint 95 → 3 ms, pan 115 → 38 ms, load 120 → 88 ms.
+- **Colour is never the only cue.** The comparison lap is dashed in every row
+  (`chart_panel.line_style`); its readout figure is italic. Map classes differ by
+  width and dash as well as colour (`track_map.PEDAL_STYLES`, `LOSS_STYLES`:
+  losing solid and wider with the rate, gaining dashed); a test holds that no
+  two classes share a (width, dash) pair. Keys (`chart_widgets.LineKey`) draw
+  each line as it is drawn.
+- **Above the traces** (`ChartStack.chrome`, a strip that scrolls sideways when
+  narrow): the key (`LapTrace.key` - "Volta 5", "Ref. · volta 3"; the full label
+  is the tooltip), the channel chips (the window's `commands.channels` actions
+  via `set_channel_actions`, short `RowSpec.chip` names), and the readout - one
+  `ReadoutCell` per quantity with a minimum width from its widest figure
+  (`Series.widest`), so the row holds still. `ChartStack.readout_at(x)` returns
+  the figures as data.
 - `chart_panel`, `track_map` and `gg_panel` take numpy arrays and labels, not
   sessions, so they are testable with tiny arrays.
 - `theme.apply` must run **before** any widget is built (pyqtgraph reads its
@@ -863,8 +893,8 @@ warning from PySide6 6.11 / numpy 2.5 / pandas 3.0 / DuckDB 1.5 on 3.14.
 **Add a channel row to the chart.** Add the channel name to `pipeline.CONTINUOUS_CHANNELS`
 (or `DISCRETE_CHANNELS`) so it is resampled onto the distance grid, add a
 `RowSpec` to `chart_panel.ROW_SPECS` with its `Series` (scale/decimals), add the
-label constants to `strings.py`. The View ▸ Channels menu is generated from
-`ROW_SPECS`. Add the column to `tables.CHANNEL_COLUMNS` if it should reach the CSV.
+label constants to `strings.py` (axis title, readout caption, chip name). The
+View ▸ Channels menu and the chips are generated from `ROW_SPECS`. Add the column to `tables.CHANNEL_COLUMNS` if it should reach the CSV.
 
 **Add or change a threshold.** Add the key to `config/defaults.toml` with a comment
 that says *why that value*. If it is in `[analysis.corners]` or `[analysis.delta]`,

@@ -28,7 +28,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from lmu_telemetry.domain.analysis.consistency import Exclusion
 from lmu_telemetry.shared.config import load_config
 from lmu_telemetry.shared import strings
-from lmu_telemetry.presentation import theme
+from lmu_telemetry.presentation import plotting, theme
 from lmu_telemetry.shared.formatting import format_lap_time
 
 COLUMN_CORNER = 0
@@ -142,13 +142,7 @@ class ConsistencyPanel(QtWidgets.QWidget):
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.splitter.addWidget(self.table)
 
-        self.plot = pg.PlotWidget()
-        self.plot.setBackground(theme.PLOT_BACKGROUND)
-        self.plot.setMenuEnabled(False)
-        self.plot.showGrid(x=True, y=True, alpha=theme.GRID_ALPHA)
-        self.plot.setLabel("bottom", strings.CONSISTENCY_PLOT_AXIS_LAP)
-        for side in ("left", "bottom"):
-            self.plot.getAxis(side).enableAutoSIPrefix(False)
+        self.plot = plotting.make_plot(bottom=strings.CONSISTENCY_PLOT_AXIS_LAP)
 
         # The +-1 sigma band, drawn first so the points sit on top of it.
         self._band = pg.LinearRegionItem(
@@ -357,7 +351,7 @@ class ConsistencyPanel(QtWidgets.QWidget):
         self._band.setRegion((mean - std, mean + std))
         self._band.setVisible(std > 0.0)
 
-        self.plot.setLabel("left", metric.label)
+        plotting.set_label(self.plot, "left", metric.label)
         self.plot.setTitle(
             strings.CONSISTENCY_PLOT_TITLE.format(
                 corner=corner.corner_label, mean=mean, std=std

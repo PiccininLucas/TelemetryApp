@@ -330,11 +330,6 @@ def test_the_map_loss_scale_keeps_neutral_dimmest():
     assert sorted(theme.LOSS_SCALE) == [-2, -1, 0, 1, 2]
 
 
-def test_rich_text_escapes_what_it_is_given():
-    markup = theme.rich("<b>Volta 3</b>", theme.TEXT)
-    assert "<b>" not in markup and "&lt;b&gt;" in markup
-
-
 # --- colour blindness ------------------------------------------------------------
 
 #: Machado, Oliveira & Fernandes (2009), severity 1.0, applied in linear RGB.
