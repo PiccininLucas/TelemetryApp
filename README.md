@@ -487,7 +487,16 @@ throttle, and it is invisible on a speed trace.
 With a comparison loaded it also carries the time and minimum speed each corner
 gave away. With the ideal lap it carries the two columns that matter most:
 which lap of the session drove this corner best, and what matching it is worth.
-That column, read top to bottom, is the practice list.
+That column, read top to bottom, is the practice list. A band over the header
+names each group of columns: *Nesta volta*, *Contra a referência*, *Contra a
+volta ideal*.
+
+**The rows stay in lap order, and the corner that costs the most is marked
+instead of moved**: the most to gain against the ideal lap or, without one, the
+most time lost to the comparison. An amber bar at its edge, the whole row in
+bold, and "▸" before its name - never colour alone. The corner card says the
+same thing in words when the cursor reaches that corner, and the two read one
+rule, so they cannot point at different corners.
 
 **Corner names are anchored to a distance, not to a corner number.** The number
 shifts the moment the detector finds one more or one fewer corner — a wet lap, a
@@ -541,6 +550,10 @@ the plot shows which it is, and a column states the answer.
 
 Measured per stint. Across a pit stop fuel load and tyre age both step, so the
 dispersion would be reporting the car's state as the driver's repeatability.
+The stint and the measure plotted are chips above the panel - the stint chips
+only when there is more than one stint, every measure with its unit - and the
+measure chosen stays put when you switch stint, since comparing it across
+stints is why you switch.
 
 Two things the real data corrected:
 

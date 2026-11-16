@@ -3,18 +3,24 @@
 This is where a debrief actually happens. The traces show what the lap looked
 like; the table says which corner to work on next, and how much it is worth.
 
-Three groups of columns, each appearing only when it has something to say:
+Three groups of columns, each appearing only when it has something to say, and
+each under a band in the header that names the question it answers:
 
-- **Always** — where the apex is, minimum and entry speed, how long the braking
-  zone was, how far braking continued past turn-in, and how long the car spent
-  on neither pedal. Coasting is the one that pays: it is the cost of an
+- **Nesta volta** (always) — where the apex is, minimum and entry speed, how
+  long the braking zone was, how far braking continued past turn-in, and how
+  long the car spent on neither pedal. Coasting is the one that pays: it is the cost of an
   unresolved decision between brake and throttle, and it is invisible on a
   speed trace.
-- **With a comparison** — the time and minimum speed this corner gave away
+- **Contra a referência** — the time and minimum speed this corner gave away
   against the reference lap.
-- **With an ideal lap** — which lap of the session drove this corner best, and
-  what matching it would be worth. That column, sorted, *is* the list of things
-  to practise.
+- **Contra a volta ideal** — which lap of the session drove this corner best,
+  and what matching it would be worth. That column, ranked, *is* the list of
+  things to practise.
+
+The rows stay in lap order, because a ranking would destroy the reading. The
+one corner to work on next is marked instead: a bar at its left edge, every
+cell emphasised and a mark before its name. `pipeline.costliest_corner` picks
+it, the same rule the corner card uses.
 
 Corner names are the user's and are stored per track, anchored to a distance
 from the line rather than to a corner number - see
@@ -27,9 +33,15 @@ from __future__ import annotations
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from lmu_telemetry.shared import strings
+from lmu_telemetry.application.pipeline import (
+    CornerRow, CostBasis, CostliestCorner, costliest_corner,
+)
 from lmu_telemetry.presentation import theme
-from lmu_telemetry.shared.formatting import format_gap, format_value
+from lmu_telemetry.presentation.grouped_header import ColumnGroup, GroupedHeader
+from lmu_telemetry.shared import strings
+from lmu_telemetry.shared.formatting import (
+    MISSING, format_distance, format_gap, format_seconds, format_speed,
+)
 
 #: Column keys, in display order. The groups are hidden as a block.
 COLUMN_NAME = "name"
@@ -58,10 +70,26 @@ COLUMNS: tuple[tuple[str, str], ...] = (
     (COLUMN_GAIN, strings.CORNERS_COLUMN_GAIN),
 )
 
+LAP_COLUMNS = frozenset({COLUMN_APEX, COLUMN_MIN_SPEED, COLUMN_ENTRY_SPEED,
+                         COLUMN_BRAKING, COLUMN_TRAIL, COLUMN_COASTING})
 COMPARISON_COLUMNS = frozenset({COLUMN_SPEED_DELTA, COLUMN_DELTA})
 IDEAL_COLUMNS = frozenset({COLUMN_BEST_LAP, COLUMN_GAIN})
 
 _INDEX_OF = {key: position for position, (key, _label) in enumerate(COLUMNS)}
+
+#: The header's bands. The name column has none: it says which corner, not
+#: anything measured about it.
+GROUPS: tuple[ColumnGroup, ...] = tuple(
+    ColumnGroup(label, tuple(sorted(_INDEX_OF[key] for key in keys)))
+    for label, keys in (
+        (strings.CORNERS_GROUP_LAP, LAP_COLUMNS),
+        (strings.CORNERS_GROUP_REFERENCE, COMPARISON_COLUMNS),
+        (strings.CORNERS_GROUP_IDEAL, IDEAL_COLUMNS),
+    )
+)
+
+#: Item data marking the costliest row's name cell for `_MarkDelegate`.
+_MARK_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 
 
 class CornerTable(QtWidgets.QWidget):
@@ -76,7 +104,8 @@ class CornerTable(QtWidgets.QWidget):
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
-        self._rows: list = []
+        self._rows: list[CornerRow] = []
+        self._costliest: CostliestCorner | None = None
         self._loading = False
         self._build()
 
@@ -92,11 +121,30 @@ class CornerTable(QtWidgets.QWidget):
         self.ideal_summary = QtWidgets.QLabel()
         self.ideal_summary.setProperty("role", "heading")
         self.ideal_summary.setToolTip(strings.IDEAL_CAVEAT)
+        # Wraps rather than set the dock's minimum width, which it alone did.
+        self.ideal_summary.setWordWrap(True)
         header.addWidget(self.ideal_summary, stretch=1)
         layout.addLayout(header)
 
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS))
+        # The grouped header replaces the default one, keeping what the table
+        # gave that one: clickable sections that highlight with the selection.
+        self.header = GroupedHeader(self.table)
+        self.header.setSectionsClickable(True)
+        self.header.setHighlightSections(True)
+        self.table.setHorizontalHeader(self.header)
         self.table.setHorizontalHeaderLabels([label for _key, label in COLUMNS])
+        for group in GROUPS:
+            for column in group.columns:
+                # The group's name follows its columns into the tooltip, so it
+                # is read even where the band elides it.
+                self.table.horizontalHeaderItem(column).setToolTip(
+                    f"{group.label} · {COLUMNS[column][1]}"
+                )
+        self.header.set_groups(GROUPS)
+        self.table.setItemDelegateForColumn(
+            _INDEX_OF[COLUMN_NAME], _MarkDelegate(self.table)
+        )
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
@@ -137,7 +185,7 @@ class CornerTable(QtWidgets.QWidget):
 
     def show_corners(
         self,
-        rows: list,
+        rows: list[CornerRow],
         ideal_summary: str = "",
         show_comparison: bool = False,
         show_ideal: bool = False,
@@ -173,8 +221,14 @@ class CornerTable(QtWidgets.QWidget):
         self.placeholder.hide()
         self.table.show()
 
+    @property
+    def costliest(self) -> CostliestCorner | None:
+        """The row marked as the corner to work on."""
+        return self._costliest
+
     def clear(self) -> None:
         self._rows = []
+        self._costliest = None
         self._loading = True
         try:
             self.table.setRowCount(0)
@@ -184,46 +238,63 @@ class CornerTable(QtWidgets.QWidget):
         self.table.hide()
         self.placeholder.show()
 
-    def _fill(self, rows: list) -> None:
+    def _fill(self, rows: list[CornerRow]) -> None:
         self.table.setRowCount(len(rows))
-
-        # The corner with the most to gain gets marked: with the ideal lap on,
-        # that single cell is the answer to "what do I practise next".
-        gains = [row.gain_s for row in rows if row.gain_s is not None]
-        worst_gain = max(gains) if gains else None
+        self._costliest = costliest_corner(rows)
 
         for position, row in enumerate(rows):
             corner = row.corner
             self._set(position, COLUMN_NAME, corner.label,
                       editable=True, tooltip=strings.CORNERS_TOOLTIP_NAME)
-            self._set(position, COLUMN_APEX, f"{corner.apex_distance_m:.0f}")
-            self._set(position, COLUMN_MIN_SPEED,
-                      format_value(corner.minimum_speed_ms * 3.6, 1))
-            self._set(position, COLUMN_ENTRY_SPEED,
-                      format_value(_kmh(corner.entry_speed_ms), 1))
-            self._set(position, COLUMN_BRAKING,
-                      format_value(corner.braking_length_m, 0))
-            self._set(position, COLUMN_TRAIL, f"{corner.trail_braking_m:.0f}")
-            self._set(position, COLUMN_COASTING, f"{corner.coasting_time_s:.2f}",
-                      tone=_coasting_tone(corner.coasting_time_s))
+            self._set(position, COLUMN_APEX, format_distance(corner.apex_distance_m))
+            self._set(position, COLUMN_MIN_SPEED, format_speed(corner.minimum_speed_ms))
+            self._set(position, COLUMN_ENTRY_SPEED, format_speed(corner.entry_speed_ms))
+            self._set(position, COLUMN_BRAKING, format_distance(corner.braking_length_m))
+            self._set(position, COLUMN_TRAIL, format_distance(corner.trail_braking_m))
+            self._set(position, COLUMN_COASTING,
+                      format_seconds(corner.coasting_time_s, 2),
+                      tone=coasting_tone(corner.coasting_time_s))
 
             self._set(position, COLUMN_SPEED_DELTA,
-                      _signed(_kmh(row.speed_delta_ms), 1),
+                      format_speed(row.speed_delta_ms, signed=True),
                       tone=theme.verdict(row.speed_delta_ms, higher_is_better=True))
-            self._set(position, COLUMN_DELTA, _signed(row.delta_s, 3),
+            self._set(position, COLUMN_DELTA, format_gap(row.delta_s),
                       tone=theme.verdict(row.delta_s, higher_is_better=False))
 
             self._set(position, COLUMN_BEST_LAP,
-                      "--" if row.best_lap_index is None
+                      MISSING if row.best_lap_index is None
                       else str(row.best_lap_index))
-            self._set(
-                position, COLUMN_GAIN,
-                "--" if row.gain_s is None else f"{row.gain_s:.3f}",
-                tone=(theme.Tone.WARNING
-                      if worst_gain is not None and row.gain_s == worst_gain
-                      and worst_gain > 0 else None),
-                tooltip=strings.CORNERS_TOOLTIP_GAIN,
-            )
+            self._set(position, COLUMN_GAIN, format_seconds(row.gain_s),
+                      tooltip=strings.CORNERS_TOOLTIP_GAIN)
+
+        if self._costliest is not None:
+            self._mark(self._costliest)
+
+    def _mark(self, costliest: CostliestCorner) -> None:
+        """Make the costliest row stand out without moving it.
+
+        Three cues, so colour is never the only one: a warning-coloured bar at
+        the row's left edge, the emphasis weight on every cell, and a mark
+        before the name (both drawn by `_MarkDelegate`). The figure it was
+        chosen by takes the warning tone - unless it is the time lost to the
+        comparison, which keeps the loss colour that says "slower".
+        """
+        position = costliest.position
+        for column in range(self.table.columnCount()):
+            item = self.table.item(position, column)
+            if item is not None:
+                item.setFont(theme.emphasised(self.table.font()))
+
+        name = self.table.item(position, _INDEX_OF[COLUMN_NAME])
+        name.setData(_MARK_ROLE, True)
+        name.setToolTip(
+            strings.CORNERS_TOOLTIP_COSTLIEST.format(
+                mark=strings.COSTLIEST_MARK, cost=costliest_cost(costliest),
+            ) + "\n\n" + strings.CORNERS_TOOLTIP_NAME
+        )
+        if costliest.basis is CostBasis.IDEAL:
+            gain = self.table.item(position, _INDEX_OF[COLUMN_GAIN])
+            gain.setForeground(QtGui.QColor(theme.tone_colour(theme.Tone.WARNING)))
 
     def _set(
         self,
@@ -306,21 +377,67 @@ class CornerTable(QtWidgets.QWidget):
             self.table.blockSignals(blocked)
 
 
-def _kmh(speed_ms: float | None) -> float | None:
-    return None if speed_ms is None else speed_ms * 3.6
+class _MarkDelegate(QtWidgets.QStyledItemDelegate):
+    """Draws the costliest corner's bar and mark beside its name.
+
+    Both are added when the cell is drawn, not written into it: the name is
+    the user's and editable, and a mark stored in the text would land in the
+    editor and from there in the catalog.
+    """
+
+    def paint(
+        self,
+        painter: QtGui.QPainter,
+        option: QtWidgets.QStyleOptionViewItem,
+        index: QtCore.QModelIndex,
+    ) -> None:
+        super().paint(painter, option, index)
+        if index.data(_MARK_ROLE):
+            rect = option.rect
+            painter.fillRect(
+                QtCore.QRect(rect.left(), rect.top(),
+                             theme.STANDOUT_BAR_WIDTH, rect.height()),
+                theme.standout_brush(),
+            )
+
+    def initStyleOption(  # noqa: N802 - Qt override
+        self, option: QtWidgets.QStyleOptionViewItem, index: QtCore.QModelIndex
+    ) -> None:
+        super().initStyleOption(option, index)
+        if index.data(_MARK_ROLE):
+            option.text = f"{strings.COSTLIEST_MARK} {option.text}"
+            # Clear of the bar.
+            option.rect.adjust(theme.STANDOUT_BAR_WIDTH, 0, 0, 0)
+
+    def sizeHint(  # noqa: N802 - Qt override
+        self, option: QtWidgets.QStyleOptionViewItem, index: QtCore.QModelIndex
+    ) -> QtCore.QSize:
+        # The mark is in the text measured; the bar beside it is not.
+        hint = super().sizeHint(option, index)
+        if index.data(_MARK_ROLE):
+            hint.setWidth(hint.width() + theme.STANDOUT_BAR_WIDTH)
+        return hint
 
 
-def _signed(value: float | None, decimals: int) -> str:
-    if value is None or not np.isfinite(value):
-        return "--"
-    return f"{value:+.{decimals}f}"
+def costliest_cost(costliest: CostliestCorner) -> str:
+    """What the costliest corner costs, in words: the table's tooltip and the
+    card's flag say it the same way."""
+    template = (strings.COSTLIEST_IDEAL if costliest.basis is CostBasis.IDEAL
+                else strings.COSTLIEST_COMPARISON)
+    return template.format(seconds=format_seconds(costliest.seconds))
 
 
-def _coasting_tone(seconds: float) -> theme.Tone | None:
+#: Time on neither pedal past which a corner is flagged, here and on the card.
+COASTING_WARNING_S = 0.25
+
+
+def coasting_tone(seconds: float | None) -> theme.Tone | None:
     """Flag a corner where the car spent real time on neither pedal.
 
     A tenth is the transition between the pedals and is unavoidable. Beyond
     about a quarter of a second the driver is waiting rather than transferring,
     and that is time given away for nothing.
     """
-    return theme.Tone.WARNING if seconds >= 0.25 else None
+    if seconds is None or not np.isfinite(seconds):
+        return None
+    return theme.Tone.WARNING if seconds >= COASTING_WARNING_S else None

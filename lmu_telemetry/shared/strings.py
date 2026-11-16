@@ -317,6 +317,19 @@ CORNERS_COLUMN_DELTA = "Δt (s)"
 CORNERS_COLUMN_BEST_LAP = "Melhor volta"
 CORNERS_COLUMN_GAIN = "A ganhar (s)"
 
+#: The bands above the table's columns. The corner card's sections use the same
+#: words, so a figure is filed under the same question in both.
+CORNERS_GROUP_LAP = "Nesta volta"
+CORNERS_GROUP_REFERENCE = "Contra a referência"
+CORNERS_GROUP_IDEAL = "Contra a volta ideal"
+
+#: Before the name of the corner that costs the lap the most, in the table and
+#: on the card: a mark that is not a colour.
+COSTLIEST_MARK = "▸"
+COSTLIEST_IDEAL = "{seconds} s a ganhar contra a volta ideal"
+COSTLIEST_COMPARISON = "{seconds} s perdidos para a referência"
+CORNERS_TOOLTIP_COSTLIEST = "{mark} A curva que mais custa nesta volta: {cost}."
+
 CORNERS_TOOLTIP_NAME = (
     "Clique duas vezes para nomear a curva. O nome fica gravado por pista e "
     "sobrevive a reimportar qualquer sessão — ele é ancorado na distância da "
@@ -359,12 +372,12 @@ CONSISTENCY_UNAVAILABLE = (
     "stint. Dispersão medida em menos que isso não significa nada."
 )
 CONSISTENCY_SUMMARY = (
-    "{n_laps} voltas · mediana {median} · σ dos tempos {std:.3f} s · "
-    "{gain:.2f} s/volta disponíveis"
+    "{n_laps} voltas · mediana {median} · σ dos tempos {std} s · "
+    "{gain} s/volta disponíveis"
 )
 CONSISTENCY_STINT = "Stint {number} ({n_laps} voltas)"
 CONSISTENCY_EXCLUDED = "Fora da medição: {laps}"
-CONSISTENCY_EXCLUDED_TOO_SLOW = "volta {number} ({excess:+.3f} s da mediana)"
+CONSISTENCY_EXCLUDED_TOO_SLOW = "volta {number} ({excess} s da mediana)"
 CONSISTENCY_EXCLUDED_TOO_FEW = "volta {number} (stint curto demais)"
 
 CONSISTENCY_COLUMN_CORNER = "Curva"
@@ -390,11 +403,21 @@ CONSISTENCY_TOOLTIP_TIME_LOST = (
     "de ápice."
 )
 
+#: What the lap-by-lap plot shows: the full name, on its axis and for screen
+#: readers, and the chip, worded like the table's columns. Both carry the unit.
 CONSISTENCY_METRIC_BRAKING = "Ponto de frenagem (m)"
 CONSISTENCY_METRIC_SPEED = "Velocidade mínima (km/h)"
 CONSISTENCY_METRIC_THROTTLE = "Retomada do acelerador (m)"
+CONSISTENCY_CHIP_BRAKING = "Frenagem (m)"
+CONSISTENCY_CHIP_SPEED = "V mín (km/h)"
+CONSISTENCY_CHIP_THROTTLE = "Acelerador (m)"
+CONSISTENCY_UNIT_M = "m"
+CONSISTENCY_UNIT_KMH = "km/h"
+CONSISTENCY_METRIC_NAME = "Medida no gráfico volta a volta"
+CONSISTENCY_STINT_NAME = "Stint"
+CONSISTENCY_STINT_TOOLTIP = "Voltas {first} a {last}. A consistência é medida dentro de um stint."
 CONSISTENCY_PLOT_AXIS_LAP = "Volta"
-CONSISTENCY_PLOT_TITLE = "{corner} · média {mean:.1f} · σ {std:.1f}"
+CONSISTENCY_PLOT_TITLE = "{corner} · média {mean} {unit} · σ {std} {unit}"
 CONSISTENCY_PLOT_EMPTY = "Selecione uma curva para ver volta a volta."
 CONSISTENCY_LEGEND_MEAN = "média"
 CONSISTENCY_LEGEND_BAND = "±1σ"
@@ -723,10 +746,12 @@ LAPS_TOOLTIP_ROW = "Clique para abrir a volta."
 
 # --- Corner detail ----------------------------------------------------------
 DETAIL_EMPTY = "Escolha uma curva na tabela, no mapa ou no gráfico."
-DETAIL_APEX = "Ápice em {distance:.0f} m · janela {start:.0f}–{end:.0f} m"
-DETAIL_SECTION_LAP = "Nesta volta"
-DETAIL_SECTION_REFERENCE = "Contra a referência"
-DETAIL_SECTION_IDEAL = "Volta ideal"
+DETAIL_APEX = "Ápice em {distance} m · janela {start}–{end} m"
+DETAIL_SECTION_LAP = CORNERS_GROUP_LAP
+DETAIL_SECTION_REFERENCE = CORNERS_GROUP_REFERENCE
+DETAIL_SECTION_IDEAL = CORNERS_GROUP_IDEAL
+#: The card's flag on the corner the table marks: the same rule, the same mark.
+DETAIL_COSTLIEST = "{mark} A curva que mais custa · {cost}"
 DETAIL_MIN_SPEED = "V mín"
 DETAIL_ENTRY_SPEED = "V entrada"
 DETAIL_BRAKING = "Frenagem"

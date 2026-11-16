@@ -278,6 +278,44 @@ def font(size_px: int) -> QtGui.QFont:
     return result
 
 
+def _families(css: str) -> list[str]:
+    """`'"Bahnschrift", "Segoe UI Semibold", sans-serif'` -> the names, in order."""
+    return [name.strip().strip('"') for name in css.split(",") if name.strip()]
+
+
+#: Width of the bar at the left edge of a row that stands out, in pixels.
+STANDOUT_BAR_WIDTH = 3
+
+
+def standout_brush() -> QtGui.QBrush:
+    """The bar at the left edge of the one table row that stands above the
+    rest - the corner that costs the most.
+
+    A bar, not a tint behind the row: `LOSS` text clears AA on a panel by a
+    hair (4.6:1), and any warm tint behind it took it under (3.7:1 at the
+    banner's 12%). Never the only cue: the row is also emphasised and marked.
+    """
+    return QtGui.QBrush(QtGui.QColor(WARNING))
+
+
+@dataclass(frozen=True, slots=True)
+class HeaderBand:
+    """How a column-group band above a table header is drawn. The band is
+    painted by hand, which no stylesheet reaches, so it is described here."""
+
+    font: QtGui.QFont
+    text: QtGui.QColor
+    rule: QtGui.QColor
+
+
+def header_band() -> HeaderBand:
+    """A group label above its columns: the header's face, a step smaller and
+    muted, over a rule in the border colour that spans the group."""
+    band_font = font(TYPE.caption)
+    band_font.setFamilies(_families(PALETTE.font_display))
+    return HeaderBand(band_font, QtGui.QColor(TEXT_MUTED), QtGui.QColor(BORDER))
+
+
 def figures(font_: QtGui.QFont) -> QtGui.QFont:
     """Tabular figures: every digit the same width, so a number that changes
     under the cursor does not push its neighbours about. Most UI faces do this

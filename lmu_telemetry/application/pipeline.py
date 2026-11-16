@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 import numpy as np
 
@@ -588,6 +589,70 @@ class CornerRow:
     speed_delta_ms: float | None = None
     best_lap_index: int | None = None
     gain_s: float | None = None
+
+
+class CostBasis(StrEnum):
+    """What a corner's cost was measured against."""
+
+    #: Time to gain against the session's ideal lap (`CornerRow.gain_s`).
+    IDEAL = "ideal"
+    #: Time lost against the comparison lap (`CornerRow.delta_s`).
+    COMPARISON = "comparison"
+
+
+@dataclass(frozen=True, slots=True)
+class CostliestCorner:
+    """The corner that costs the lap the most time, and by how much.
+
+    Attributes:
+        position: Index into the rows, which are in lap order.
+        seconds: What it costs: time to gain, or time lost; always above zero.
+        basis: Which of the two that is.
+    """
+
+    position: int
+    seconds: float
+    basis: CostBasis
+
+
+def costliest_corner(rows: Sequence[CornerRow]) -> CostliestCorner | None:
+    """The one corner to work on next.
+
+    The single rule behind the corner table's marked row and the corner card's
+    flag, so the two can never point at different corners:
+
+    - with an ideal lap, the corner with the most to gain against it - the
+      ideal lap is built from the driver's own best, so that time is known to
+      be reachable;
+    - without one but with a comparison, the corner where the lap loses most to
+      the comparison lap;
+    - with neither, no corner.
+
+    The ideal lap decides as soon as it exists, even when nothing is left to
+    gain: falling back to the comparison then would mark a corner as worth
+    working on that the session already drove at its best. Only time actually
+    lost counts - a corner gained, or level, is never the costliest. Ties go to
+    the first corner of the lap.
+    """
+    gains = [row.gain_s for row in rows]
+    if any(gain is not None for gain in gains):
+        return _largest(gains, CostBasis.IDEAL)
+    deltas = [row.delta_s for row in rows]
+    if any(delta is not None for delta in deltas):
+        return _largest(deltas, CostBasis.COMPARISON)
+    return None
+
+
+def _largest(
+    values: Sequence[float | None], basis: CostBasis
+) -> CostliestCorner | None:
+    best: CostliestCorner | None = None
+    for position, value in enumerate(values):
+        if value is None or not np.isfinite(value) or value <= 0.0:
+            continue
+        if best is None or value > best.seconds:
+            best = CostliestCorner(position, float(value), basis)
+    return best
 
 
 def name_corners(

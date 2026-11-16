@@ -1148,7 +1148,7 @@ def test_consistency_plot_drops_gaps_rather_than_zeroing_them(qt_app):
 
     panel = ConsistencyPanel()
     panel.show_report(make_report(), [2, 3, 4, 8, 9])
-    panel.metric_selector.setCurrentIndex(1)          # minimum speed, has a NaN
+    panel.metric_selector.chips()[1].click()          # minimum speed, has a NaN
 
     x, y = panel._series.getData()
     assert len(x) == 4

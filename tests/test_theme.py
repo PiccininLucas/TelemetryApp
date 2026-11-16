@@ -317,6 +317,28 @@ def test_a_tone_reaches_the_drawn_colour_and_can_be_taken_back():
     assert drawn() == theme.TEXT
 
 
+def test_the_standout_bar_is_the_warning_colour_and_stands_out():
+    colour = theme.standout_brush().color()
+    assert colour.name() == theme.WARNING and colour.alpha() == 255
+    assert contrast(theme.WARNING, theme.SURFACE) >= 3.0    # a non-text mark
+    assert theme.STANDOUT_BAR_WIDTH >= 2
+
+
+@pytest.mark.parametrize("figure", ["TEXT", "GAIN", "LOSS", "WARNING"])
+def test_figures_on_a_table_row_meet_aa(figure):
+    """Why the standout row is a bar and not a tint: LOSS clears AA on a panel
+    by a hair, and a warm tint behind it took it under."""
+    assert contrast(getattr(theme, figure), theme.SURFACE) >= AA
+
+
+def test_the_header_band_is_drawn_from_the_palette():
+    band = theme.header_band()
+    assert band.font.pixelSize() == theme.TYPE.caption
+    assert band.font.families()[0] == "Bahnschrift"
+    assert band.text.name() == theme.TEXT_MUTED
+    assert band.rule.name() == theme.BORDER
+
+
 def test_the_delta_fills_are_the_gain_and_loss_colours():
     assert QtGui.QColor(*theme.FILL_LOSS[:3]).name() == theme.LOSS
     assert QtGui.QColor(*theme.FILL_GAIN[:3]).name() == theme.GAIN

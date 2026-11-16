@@ -137,7 +137,8 @@ lmu_telemetry/
     errors.py                 TelemetryError hierarchy
     config.py                 Config (dotted-path access), load_config (lru_cache'd)
     logging_config.py         setup_logging, get_logger
-    formatting.py             format_lap_time, format_gap, format_value
+    formatting.py             every number on screen: lap/sector time, seconds, gap,
+                              speed (m/s in, km/h out), distance, channel value
   domain/                   numpy/scipy/stdlib only
     models.py                 SessionInfo, Lap, LapFlag, Corner, Stint, filename parser, SHA-256
     units.py                  unit conversion driven by the file's own `unit` column
@@ -169,7 +170,7 @@ lmu_telemetry/
     main_window (composition only), lap_view, window_actions, exporting,
     session_state, import_worker, status_line, notice_banner, session_browser,
     plotting, chart_widgets, chart_panel, track_map, gg_panel, corner_table,
-    consistency_panel, theme,
+    grouped_header, consistency_panel, chip_group, theme,
     session_header, lap_list, corner_detail
 scripts/                    CLI tools (section 2)
 tests/                      pytest suite + synthetic data builders
@@ -522,10 +523,66 @@ A summary strip across the top, the traces in the centre, and everything else a
   dock) → search; Down/Enter → list (opening the first match); Esc clears; arrows
   skip group headings (`_SessionList.moveCursor`). Matching is the pure
   `session_matches(SessionRow, BrowserFilter)`.
+- **`CornerTable`** (`corner_table.py`) — one row per corner, **always in lap
+  order** (`setSortingEnabled(False)` on purpose; a ranking would destroy the
+  reading). Three column groups, each under a band in the header
+  (`GroupedHeader`, below): *Nesta volta* (apex, min/entry speed, braking, trail,
+  coasting), *Contra a referência* (`COMPARISON_COLUMNS`: ΔV mín, Δt) and *Contra
+  a volta ideal* (`IDEAL_COLUMNS`: best lap, gain); the last two are hidden as a
+  block when there is nothing to compare. The name column is editable and has no
+  group; a rename emits `corner_renamed(index, apex_m, name)`. **The costliest
+  corner** - `pipeline.costliest_corner(rows)`, below - is marked without moving:
+  a `WARNING` bar at the row's left edge (`theme.standout_brush`,
+  `STANDOUT_BAR_WIDTH`), every cell in `theme.emphasised` weight, and "▸" before
+  the name. Bar and mark are drawn by `_MarkDelegate` (`initStyleOption`,
+  `paint`, `sizeHint`), never written into the text, so the editor and the
+  catalog never see them. The deciding figure keeps its meaning: "A ganhar" in
+  `WARNING`, or Δt in `LOSS`. No tint behind the row: `LOSS` text is 4.6:1 on a
+  panel and fell to 3.7:1 on a 12% warm tint. Coasting ≥ `COASTING_WARNING_S`
+  (0.25 s) is `WARNING` (`coasting_tone`, shared with the card). The ideal-lap
+  summary line above the table wraps, so it never sets the dock's width.
+- **`GroupedHeader`** (`grouped_header.py`) — Qt has no grouped header. One
+  `QHeaderView` a band taller (`band_height`, 16 px at the caption size): each
+  section paints its label in the lower part (`paintSection` with a shifted
+  rect), and `paintEvent` paints the group labels (`ColumnGroup(label,
+  columns)`) over the top, **computed from the sections' geometry on every
+  paint** (`group_span`), so scrolling, resizing and hidden columns need no
+  syncing; a fully hidden group draws nothing. Labels are centred and elided to
+  their columns, never widening them; the band's tooltip and each column's
+  tooltip name the group. Font and colours from `theme.header_band()`.
+- **Costliest corner** — `pipeline.costliest_corner(rows) → CostliestCorner |
+  None` (`position`, `seconds`, `basis: CostBasis`). With any `gain_s` present
+  (an ideal lap), the largest positive gain; else with any `delta_s` (a
+  comparison), the largest positive delta; else none. The ideal lap decides as
+  soon as it exists - no fallback to the comparison when nothing is left to gain;
+  non-finite values skipped; ties to the first corner. Pure, no Qt; the table and
+  the card both call it on the same rows, so they cannot disagree.
 - **`CornerDetail`** (`corner_detail.py`) — the corner under the cursor, figures
-  labelled in words: this lap, against the reference, against the ideal lap. Picks
-  the corner by nearest apex, the same rule as `CornerTable.select_corner_at`.
-  Scrolls rather than imposing its height on the bottom row.
+  labelled in words: this lap, against the reference, against the ideal lap (the
+  section titles are the table's group labels). Picks the corner by nearest
+  apex, the same rule as `CornerTable.select_corner_at`. On the costliest corner
+  it shows `costliest_flag` ("▸ A curva que mais custa · 0.262 s a ganhar contra
+  a volta ideal", `WARNING`, emphasised; `shows_costliest`), and the gain is
+  `WARNING` there only. A missing figure is "--", never "-- km/h". Scrolls
+  rather than imposing its height on the bottom row.
+- **`ConsistencyPanel`** (`consistency_panel.py`) — per stint: the ranking (worst
+  first, from the analysis; not re-sortable; name column sized to content, spare
+  width to the last), and the selected corner lap by lap with mean and ±1σ band.
+  Warning cut-offs from `ui.consistency.*`. One row of controls: **stint chips**
+  on the left, shown only with more than one stint (`stint_changed(index)`), and
+  **measure chips** on the right (`METRICS`: chip text with unit, e.g. "V mín
+  (km/h)"; full name with unit for the axis, tooltip and accessible name; the
+  plot title carries the unit). The measure survives a change of stint and of
+  lap. The summary has a line of its own and wraps. A stint too short to measure
+  shows the placeholder but keeps the stint chips (`show_report` →
+  `_clear_report`); `clear()` hides them too.
+- **`ChipGroup`** (`chip_group.py`) — exclusive chips (`QToolButton`,
+  `role="chip"`, in an exclusive `QButtonGroup`): `set_options(labels,
+  descriptions, current)`, `current_index`, `set_current_index` (silent),
+  `chosen(index)` for the user's picks only. Keyboard as radio buttons (Qt's
+  own for exclusive groups): Tab stops on the chosen chip, arrows move the
+  choice. Laid out by `FlowLayout`, which wraps instead of widening: its minimum
+  width is the widest chip, its height follows its width.
 - **Corner numbers** — the map (`TrackMap.set_corner_labels`) and the traces show
   the short form of a corner's label (`_short_label`: "T6 Hairpin" → "T6"; a user's
   own name or a detector "C4" stays whole).
@@ -625,7 +682,9 @@ and the trace readout. On a `QLabel` a tone is a dynamic property the style shee
 selects on (`theme.set_tone`, which re-polishes); on a table or tree item, which no
 style sheet reaches, it is a foreground (`theme.tone_colour`). Other helpers:
 `theme.emphasised(font)` (the one emphasis weight), `theme.figures(font)`
-(tabular digits), and `theme.set_series(label, key)` - a figure coloured as the
+(tabular digits), `theme.standout_brush()` / `STANDOUT_BAR_WIDTH` (the bar
+beside the one row that stands out), `theme.header_band()` (font and colours of
+a hand-painted header band - no style sheet reaches it), and `theme.set_series(label, key)` - a figure coloured as the
 chart series it was read from (`SERIES_COLOURS`: primary, comparison, ideal,
 throttle, brake), again a style-sheet property. No panel builds HTML. Widgets are transparent by default; only the window,
 the panels (docks and the `#central` card) and the widgets Qt paints itself name a
@@ -694,7 +753,18 @@ literal and no `setStyleSheet`**. The print palette in `infrastructure/export/`
   globals at construction). Fixed left-axis width keeps stacked rows aligned.
 - **All user-visible text is in `shared/strings.py`** (~620 lines). The one-way
   rule: strings is a leaf. Adding UI text means adding a constant there.
-- `formatting.py`: `format_lap_time`, `format_gap`, `format_value`.
+- **`formatting.py` is the one place a number becomes text.** `format_lap_time`
+  (m:ss.mmm), `format_sector_time`, `format_seconds(s, decimals=3)` (a time,
+  unsigned), `format_gap(s, decimals=3)` (a difference, always signed),
+  `format_speed(m_s, signed=False)` (m/s in, km/h to a tenth out - the only
+  place that conversion is done for display), `format_distance(m, decimals=0)`,
+  `format_value(v, decimals)` (a readout figure already in display units). Each
+  returns the number without its unit (headers and `strings` templates carry
+  it) and `MISSING` ("--") for None, NaN or ±inf. Signed forms round first, so
+  a difference that shows as zero is "+0.000", never "-0.000". Templates in
+  `strings.py` take the formatted text (`{std}`, not `{std:.3f}`).
+  `tests/test_formatting.py` holds every helper against None, NaN, ±inf, zero,
+  negatives and values that round to zero.
 
 ---
 

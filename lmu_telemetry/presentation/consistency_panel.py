@@ -15,6 +15,12 @@ and the "Padrão" column states the answer so it cannot be missed.
 Consistency is measured per stint. Across a pit stop, fuel load and tyre age
 both step, so the dispersion would be measuring the car's state rather than the
 driver's repeatability.
+
+The stint and the plotted measure are chosen with chips, not combo boxes: there
+are only ever a few of each, and a chip row shows every option at once. The
+stint chips appear only when there is more than one stint, and the measure
+chosen survives a change of stint - comparing one measure across stints is the
+reason to switch.
 """
 
 from __future__ import annotations
@@ -26,10 +32,14 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from lmu_telemetry.domain.analysis.consistency import Exclusion
-from lmu_telemetry.shared.config import load_config
-from lmu_telemetry.shared import strings
 from lmu_telemetry.presentation import plotting, theme
-from lmu_telemetry.shared.formatting import format_lap_time
+from lmu_telemetry.presentation.chip_group import ChipGroup
+from lmu_telemetry.shared import strings
+from lmu_telemetry.shared.config import load_config
+from lmu_telemetry.shared.formatting import (
+    format_distance, format_gap, format_lap_time, format_seconds, format_speed,
+    format_value,
+)
 
 COLUMN_CORNER = 0
 COLUMN_LAPS = 1
@@ -55,20 +65,28 @@ class Metric:
     """One thing that can be plotted lap by lap.
 
     Attributes:
-        label: What the selector calls it.
+        label: Its full name with the unit: the plot's axis, and what a screen
+            reader says for its chip.
+        chip: The chip's text, worded like the table's column, with the unit.
+        unit: The unit alone, for the plot's title.
         attribute: Name of the per-lap array on `CornerConsistency`.
         scale: Multiplier to display units.
     """
 
     label: str
+    chip: str
+    unit: str
     attribute: str
     scale: float = 1.0
 
 
 METRICS: tuple[Metric, ...] = (
-    Metric(strings.CONSISTENCY_METRIC_BRAKING, "braking_points_m"),
-    Metric(strings.CONSISTENCY_METRIC_SPEED, "minimum_speeds_ms", 3.6),
-    Metric(strings.CONSISTENCY_METRIC_THROTTLE, "throttle_points_m"),
+    Metric(strings.CONSISTENCY_METRIC_BRAKING, strings.CONSISTENCY_CHIP_BRAKING,
+           strings.CONSISTENCY_UNIT_M, "braking_points_m"),
+    Metric(strings.CONSISTENCY_METRIC_SPEED, strings.CONSISTENCY_CHIP_SPEED,
+           strings.CONSISTENCY_UNIT_KMH, "minimum_speeds_ms", 3.6),
+    Metric(strings.CONSISTENCY_METRIC_THROTTLE, strings.CONSISTENCY_CHIP_THROTTLE,
+           strings.CONSISTENCY_UNIT_M, "throttle_points_m"),
 )
 
 # The spread above which a corner's dispersion is marked as worth acting on comes
@@ -94,19 +112,31 @@ class ConsistencyPanel(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        header = QtWidgets.QHBoxLayout()
-        header.setContentsMargins(8, 2, 8, 2)
-        self.stint_selector = QtWidgets.QComboBox()
-        self.stint_selector.currentIndexChanged.connect(self._on_stint_changed)
-        self.summary = QtWidgets.QLabel()
-        header.addWidget(self.stint_selector)
-        header.addWidget(self.summary, stretch=1)
+        # One row of controls, as above the traces: the stint on the left, the
+        # measure the plot shows on the right, over the plot. The summary gets
+        # a line of its own below instead of the width the chips leave over.
+        # Chips and summary wrap rather than widen the panel: this row used to
+        # set the window's minimum width.
+        controls = QtWidgets.QHBoxLayout()
+        controls.setContentsMargins(8, 4, 8, 0)
+        controls.setSpacing(12)
+        self.stint_selector = ChipGroup(strings.CONSISTENCY_STINT_NAME)
+        self.stint_selector.chosen.connect(self._on_stint_changed)
+        controls.addWidget(self.stint_selector, alignment=QtCore.Qt.AlignmentFlag.AlignTop)
+        controls.addStretch(1)
+        self.metric_selector = ChipGroup(strings.CONSISTENCY_METRIC_NAME)
+        self.metric_selector.set_options(
+            [metric.chip for metric in METRICS],
+            [metric.label for metric in METRICS],
+        )
+        self.metric_selector.chosen.connect(lambda _index: self._redraw())
+        controls.addWidget(self.metric_selector, alignment=QtCore.Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(controls)
 
-        self.metric_selector = QtWidgets.QComboBox()
-        self.metric_selector.addItems([metric.label for metric in METRICS])
-        self.metric_selector.currentIndexChanged.connect(lambda _i: self._redraw())
-        header.addWidget(self.metric_selector)
-        layout.addLayout(header)
+        self.summary = QtWidgets.QLabel()
+        self.summary.setWordWrap(True)
+        self.summary.setContentsMargins(8, 0, 8, 0)
+        layout.addWidget(self.summary)
 
         self.excluded = QtWidgets.QLabel()
         self.excluded.setProperty("role", "placeholder")
@@ -133,12 +163,13 @@ class ConsistencyPanel(QtWidgets.QWidget):
         # Already sorted worst first by the analysis, and that ranking is the
         # deliverable: a driver cannot work on twelve corners at once.
         self.table.setSortingEnabled(False)
+        # Every column as wide as its contents and the spare width to the last,
+        # as in the corner table: a stretched name column was the one squeezed
+        # to "T1..." when the panel was narrow.
         self.table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.ResizeToContents
         )
-        self.table.horizontalHeader().setSectionResizeMode(
-            COLUMN_CORNER, QtWidgets.QHeaderView.ResizeMode.Stretch
-        )
+        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.splitter.addWidget(self.table)
 
@@ -186,30 +217,29 @@ class ConsistencyPanel(QtWidgets.QWidget):
             stints: `pipeline.StintAnalysis` objects.
             current_index: Which to show, usually the one the current lap is in.
         """
-        blocked = self.stint_selector.blockSignals(True)
-        try:
-            self.stint_selector.clear()
-            for stint in stints:
-                self.stint_selector.addItem(
-                    strings.CONSISTENCY_STINT.format(
-                        number=stint.index + 1, n_laps=len(stint.lap_indices)
-                    ),
-                    userData=stint.index,
-                )
-            self.stint_selector.setVisible(len(stints) > 1)
-            if 0 <= current_index < len(stints):
-                self.stint_selector.setCurrentIndex(current_index)
-        finally:
-            self.stint_selector.blockSignals(blocked)
+        self.stint_selector.set_options(
+            [strings.CONSISTENCY_STINT.format(number=stint.index + 1,
+                                              n_laps=len(stint.lap_indices))
+             for stint in stints],
+            [_stint_description(stint) for stint in stints],
+            current=current_index,
+        )
+        # A session driven without stopping is one stint, and a selector with
+        # one entry is furniture.
+        self.stint_selector.setVisible(len(stints) > 1)
 
         stint = stints[current_index] if 0 <= current_index < len(stints) else None
         self.show_report(None if stint is None else stint.report,
                          [] if stint is None else list(stint.lap_indices))
 
     def show_report(self, report, lap_numbers: list[int]) -> None:
-        """Fill the table and plot for one stint's report."""
+        """Fill the table and plot for one stint's report.
+
+        A stint too short to measure shows the placeholder but keeps the stint
+        chips: they are the way back to the stints that can be measured.
+        """
         if report is None or not report.is_measurable:
-            self.clear()
+            self._clear_report()
             return
 
         self._corners = list(report.corners)
@@ -218,8 +248,8 @@ class ConsistencyPanel(QtWidgets.QWidget):
         self.summary.setText(strings.CONSISTENCY_SUMMARY.format(
             n_laps=len(report.lap_indices),
             median=format_lap_time(report.median_lap_time_s),
-            std=report.lap_time_std_s,
-            gain=report.total_estimated_gain_s,
+            std=format_seconds(report.lap_time_std_s),
+            gain=format_seconds(report.total_estimated_gain_s, 2),
         ))
         self.excluded.setText(_excluded_text(report.excluded_laps))
         self.excluded.setVisible(bool(report.excluded_laps))
@@ -235,6 +265,11 @@ class ConsistencyPanel(QtWidgets.QWidget):
         self.table.selectRow(0)
 
     def clear(self) -> None:
+        """Nothing to show: no report and no stints."""
+        self._clear_report()
+        self.stint_selector.hide()
+
+    def _clear_report(self) -> None:
         self._corners = []
         self._lap_numbers = []
         self.table.setRowCount(0)
@@ -244,8 +279,9 @@ class ConsistencyPanel(QtWidgets.QWidget):
         self.excluded.hide()
         self.splitter.hide()
         self.summary.hide()
+        # Hidden, not reset: the measure chosen is still chosen when a lap with
+        # enough laps around it comes back.
         self.metric_selector.hide()
-        self.stint_selector.hide()
         self.placeholder.show()
 
     def _fill(self, corners: list) -> None:
@@ -258,17 +294,17 @@ class ConsistencyPanel(QtWidgets.QWidget):
             self._set(row, COLUMN_CORNER, corner.corner_label, align_left=True)
             self._set(row, COLUMN_LAPS, str(corner.n_laps))
             self._set(
-                row, COLUMN_BRAKING_STD, f"{corner.braking_point_std_m:.1f}",
+                row, COLUMN_BRAKING_STD, format_distance(corner.braking_point_std_m, 1),
                 tone=_warn(corner.braking_point_std_m, braking_limit),
             )
             self._set(
-                row, COLUMN_SPEED_STD, f"{corner.minimum_speed_std_kmh:.1f}",
+                row, COLUMN_SPEED_STD, format_speed(corner.minimum_speed_std_ms),
                 tone=_warn(corner.minimum_speed_std_kmh, speed_limit),
             )
             self._set(row, COLUMN_THROTTLE_STD,
-                      f"{corner.throttle_point_std_m:.1f}")
+                      format_distance(corner.throttle_point_std_m, 1))
             self._set(
-                row, COLUMN_TIME_LOST, f"{corner.estimated_time_lost_s:.3f}",
+                row, COLUMN_TIME_LOST, format_seconds(corner.estimated_time_lost_s),
                 # The worst corner is first, by construction.
                 tone=theme.Tone.WARNING if row == 0 and
                 corner.estimated_time_lost_s > 0 else None,
@@ -313,6 +349,11 @@ class ConsistencyPanel(QtWidgets.QWidget):
         if index >= 0:
             self.stint_changed.emit(index)
 
+    @property
+    def metric(self) -> Metric:
+        """The measure the plot shows."""
+        return METRICS[max(self.metric_selector.current_index(), 0)]
+
     def _selected_corner(self):
         rows = self.table.selectionModel().selectedRows()
         if not rows:
@@ -328,7 +369,7 @@ class ConsistencyPanel(QtWidgets.QWidget):
                                color=theme.TEXT_MUTED, size=theme.PLOT_TEXT_SIZE)
             return
 
-        metric = METRICS[max(self.metric_selector.currentIndex(), 0)]
+        metric = self.metric
         values = np.asarray(getattr(corner, metric.attribute),
                             dtype=np.float64) * metric.scale
         laps = np.asarray(self._lap_numbers, dtype=np.float64)
@@ -354,7 +395,8 @@ class ConsistencyPanel(QtWidgets.QWidget):
         plotting.set_label(self.plot, "left", metric.label)
         self.plot.setTitle(
             strings.CONSISTENCY_PLOT_TITLE.format(
-                corner=corner.corner_label, mean=mean, std=std
+                corner=corner.corner_label, unit=metric.unit,
+                mean=format_value(mean, 1), std=format_value(std, 1),
             ),
             color=theme.TEXT_MUTED, size=theme.PLOT_TEXT_SIZE,
         )
@@ -377,6 +419,13 @@ def _warn(value: float, threshold: float) -> theme.Tone | None:
     return theme.Tone.WARNING if value >= threshold else None
 
 
+def _stint_description(stint) -> str:
+    laps = stint.lap_indices
+    if not laps:
+        return strings.CONSISTENCY_STINT_NAME
+    return strings.CONSISTENCY_STINT_TOOLTIP.format(first=laps[0], last=laps[-1])
+
+
 def _excluded_text(excluded: dict) -> str:
     if not excluded:
         return ""
@@ -385,7 +434,7 @@ def _excluded_text(excluded: dict) -> str:
         entry = excluded[lap_index]
         if entry.reason is Exclusion.TOO_SLOW:
             parts.append(strings.CONSISTENCY_EXCLUDED_TOO_SLOW.format(
-                number=lap_index, excess=entry.excess_s
+                number=lap_index, excess=format_gap(entry.excess_s)
             ))
         else:
             parts.append(strings.CONSISTENCY_EXCLUDED_TOO_FEW.format(

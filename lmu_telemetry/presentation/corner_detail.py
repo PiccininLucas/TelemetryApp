@@ -8,7 +8,9 @@ reference, and what is it worth against the ideal lap.
 
 It follows the window's single cursor, so moving along the lap walks the card
 through the corners, and it chooses the corner the same way the table does -
-the nearest apex - so the two always agree on which corner is meant.
+the nearest apex - so the two always agree on which corner is meant. They agree
+on which corner costs the most for the same reason: both ask
+`pipeline.costliest_corner`, and both mark it with the same words.
 """
 
 from __future__ import annotations
@@ -18,10 +20,15 @@ from collections.abc import Sequence
 import numpy as np
 from PySide6 import QtCore, QtWidgets
 
-from lmu_telemetry.application.pipeline import CornerRow
+from lmu_telemetry.application.pipeline import (
+    CornerRow, CostBasis, CostliestCorner, costliest_corner,
+)
 from lmu_telemetry.presentation import theme
+from lmu_telemetry.presentation.corner_table import coasting_tone, costliest_cost
 from lmu_telemetry.shared import strings
-from lmu_telemetry.shared.formatting import format_gap, format_value
+from lmu_telemetry.shared.formatting import (
+    MISSING, format_distance, format_gap, format_seconds, format_speed,
+)
 
 
 class CornerDetail(QtWidgets.QWidget):
@@ -30,6 +37,7 @@ class CornerDetail(QtWidgets.QWidget):
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: list[CornerRow] = []
+        self._costliest: CostliestCorner | None = None
         self._comparing = False
         self._has_ideal = False
         self._shown: int | None = None
@@ -63,6 +71,15 @@ class CornerDetail(QtWidgets.QWidget):
         self.subtitle.setProperty("role", "caption")
         outer.addWidget(self.title)
         outer.addWidget(self.subtitle)
+
+        # Shown only on the corner the table marks: the mark and the words say
+        # it, the warning tone and the weight only repeat it.
+        self.costliest_flag = QtWidgets.QLabel()
+        self.costliest_flag.setProperty("role", "caption")
+        self.costliest_flag.setWordWrap(True)
+        self.costliest_flag.setFont(theme.emphasised(self.costliest_flag.font()))
+        theme.set_tone(self.costliest_flag, theme.Tone.WARNING)
+        outer.addWidget(self.costliest_flag)
 
         self.body = QtWidgets.QWidget()
         body = QtWidgets.QVBoxLayout(self.body)
@@ -139,6 +156,7 @@ class CornerDetail(QtWidgets.QWidget):
         """Take the corners of the lap on screen. Shows the first until the
         cursor picks another, so the card is never blank beside a full table."""
         self._rows = list(rows)
+        self._costliest = costliest_corner(self._rows)
         self._comparing = comparing
         self._has_ideal = has_ideal
         self._shown = None
@@ -163,6 +181,12 @@ class CornerDetail(QtWidgets.QWidget):
             return None
         return self._rows[self._shown].corner.label
 
+    @property
+    def shows_costliest(self) -> bool:
+        """Whether the corner on the card is the one the table marks."""
+        return (self._shown is not None and self._costliest is not None
+                and self._costliest.position == self._shown)
+
     def _show(self, position: int) -> None:
         self._shown = position
         row = self._rows[position]
@@ -170,57 +194,66 @@ class CornerDetail(QtWidgets.QWidget):
 
         self.title.setText(corner.label)
         self.subtitle.setText(strings.DETAIL_APEX.format(
-            distance=corner.apex_distance_m,
-            start=corner.start_distance_m, end=corner.end_distance_m,
+            distance=format_distance(corner.apex_distance_m),
+            start=format_distance(corner.start_distance_m),
+            end=format_distance(corner.end_distance_m),
         ))
+        costliest = self._costliest if self.shows_costliest else None
+        self.costliest_flag.setVisible(costliest is not None)
+        if costliest is not None:
+            self.costliest_flag.setText(strings.DETAIL_COSTLIEST.format(
+                mark=strings.COSTLIEST_MARK, cost=costliest_cost(costliest),
+            ))
 
-        self._set("min_speed", _kmh(corner.minimum_speed_ms))
-        self._set("entry_speed", _kmh(corner.entry_speed_ms))
+        self._set("min_speed", _with_unit(strings.DETAIL_KMH,
+                                          format_speed(corner.minimum_speed_ms)))
+        self._set("entry_speed", _with_unit(strings.DETAIL_KMH,
+                                            format_speed(corner.entry_speed_ms)))
         if corner.braking_distance_m is None:
             self._set("braking", strings.DETAIL_FLAT)
-            self._set("braking_point", "--")
+            self._set("braking_point", MISSING)
         else:
-            self._set("braking", strings.DETAIL_M.format(
-                value=format_value(corner.braking_length_m, 0)))
-            self._set("braking_point", strings.DETAIL_AT_M.format(
-                value=format_value(corner.braking_distance_m, 0)))
-        self._set("throttle", "--" if corner.throttle_distance_m is None
-                  else strings.DETAIL_AT_M.format(
-                      value=format_value(corner.throttle_distance_m, 0)))
-        self._set("trail", strings.DETAIL_M.format(
-            value=format_value(corner.trail_braking_m, 0)))
+            self._set("braking", _with_unit(
+                strings.DETAIL_M, format_distance(corner.braking_length_m)))
+            self._set("braking_point", _with_unit(
+                strings.DETAIL_AT_M, format_distance(corner.braking_distance_m)))
+        self._set("throttle", _with_unit(
+            strings.DETAIL_AT_M, format_distance(corner.throttle_distance_m)))
+        self._set("trail", _with_unit(
+            strings.DETAIL_M, format_distance(corner.trail_braking_m)))
         self._set(
             "coasting",
-            strings.DETAIL_S.format(value=format_value(corner.coasting_time_s, 2)),
+            _with_unit(strings.DETAIL_S, format_seconds(corner.coasting_time_s, 2)),
             # The same threshold the table uses to flag a hesitation.
-            tone=theme.Tone.WARNING if corner.coasting_time_s >= 0.25 else None,
+            tone=coasting_tone(corner.coasting_time_s),
         )
 
         self.not_comparing.setVisible(not self._comparing)
         self.reference_form.setVisible(self._comparing)
         if self._comparing:
-            speed_delta = (None if row.speed_delta_ms is None
-                           else row.speed_delta_ms * 3.6)
             self._set(
                 "speed_delta",
-                "--" if speed_delta is None
-                else strings.DETAIL_KMH.format(value=f"{speed_delta:+.1f}"),
-                tone=theme.verdict(speed_delta, higher_is_better=True),
+                _with_unit(strings.DETAIL_KMH,
+                           format_speed(row.speed_delta_ms, signed=True)),
+                tone=theme.verdict(row.speed_delta_ms, higher_is_better=True),
             )
             self._set(
                 "time_delta",
-                "--" if row.delta_s is None
-                else strings.DETAIL_S.format(value=format_gap(row.delta_s)),
+                _with_unit(strings.DETAIL_S, format_gap(row.delta_s)),
                 tone=theme.verdict(row.delta_s, higher_is_better=False),
             )
 
         self.ideal_section.setVisible(self._has_ideal)
         self.ideal_form.setVisible(self._has_ideal)
         if self._has_ideal:
-            self._set("gain", "--" if row.gain_s is None
-                      else strings.DETAIL_S.format(value=f"{row.gain_s:.3f}"),
-                      tone=theme.Tone.WARNING if (row.gain_s or 0.0) > 0.05 else None)
-            self._set("best_lap", "--" if row.best_lap_index is None
+            # Warning only where the table puts it: on the costliest corner.
+            # Any gain over a threshold used to qualify, which marked corners
+            # the table did not.
+            self._set("gain", _with_unit(strings.DETAIL_S, format_seconds(row.gain_s)),
+                      tone=theme.Tone.WARNING
+                      if costliest is not None and costliest.basis is CostBasis.IDEAL
+                      else None)
+            self._set("best_lap", MISSING if row.best_lap_index is None
                       else strings.DETAIL_LAP.format(value=row.best_lap_index))
 
         self.placeholder.hide()
@@ -234,8 +267,9 @@ class CornerDetail(QtWidgets.QWidget):
 
     def clear(self) -> None:
         self._rows = []
+        self._costliest = None
         self._shown = None
-        for widget in (self.title, self.subtitle, self.body):
+        for widget in (self.title, self.subtitle, self.costliest_flag, self.body):
             widget.hide()
         self.placeholder.show()
 
@@ -246,7 +280,7 @@ def _section(text: str) -> QtWidgets.QLabel:
     return label
 
 
-def _kmh(speed_ms: float | None) -> str:
-    if speed_ms is None:
-        return "--"
-    return strings.DETAIL_KMH.format(value=format_value(speed_ms * 3.6, 1))
+def _with_unit(template: str, figure: str) -> str:
+    """A figure in its unit's template, or "--" alone: "-- km/h" reads as a
+    value that exists and is unknown, when there is no value at all."""
+    return MISSING if figure == MISSING else template.format(value=figure)
