@@ -97,13 +97,40 @@ properties) and run anywhere. Five modules use a real session when one is found
 
 CI (`.github/workflows/tests.yml`): ubuntu, Python 3.13 and 3.14, `pytest -q`.
 
+### Packaging (`LMU Telemetry.exe`)
+
+`scripts/build_exe.ps1` installs `requirements-build.txt` (PyInstaller, pinned),
+runs `packaging/lmu_telemetry.spec` and smoke-tests the output; `-Shortcut` adds
+a desktop shortcut. Output: `dist/LMU Telemetry/` - a one-folder, windowed build
+(~310 MB), the .exe beside `_internal/`. `build/` and `dist/` are git-ignored.
+
+- **Bundled data:** `config/defaults.toml` → `_internal/config/` (where
+  `config.DEFAULT_CONFIG_PATH`, two levels above the package, resolves inside the
+  .exe) and `assets/app.ico` → `_internal/assets/` (found through
+  `main.RESOURCE_ROOT` = `sys._MEIPASS` when frozen). User data stays in
+  `%USERPROFILE%\.lmu-telemetry`, outside the build.
+- **Excluded:** tkinter, PyQt5/6, PySide2, IPython, pytest, pyqtgraph.opengl and
+  unused Qt modules (WebEngine, 3D, Multimedia, Quick/QML, Pdf).
+- **`main.py --smoke-test [png]`** builds the window, lets it open the default lap,
+  optionally saves a screenshot, logs "Smoke test passed" and exits 0. The build
+  script runs it on the .exe against the demo session imported into a throwaway
+  `LMU_TELEMETRY_DATA_DIR` and fails unless the log shows the lap loaded;
+  `tests/test_packaging.py` runs it on the source, and checks every file the spec
+  bundles exists where the code looks for it.
+- **Icon:** `scripts/make_icon.py` draws `assets/app.ico` (seven sizes, each drawn
+  at its size) from the theme's surface and accent.
+- PyInstaller warns `Hidden import "scipy.special._cdflib" not found`: a hook
+  for a module newer SciPy no longer has; harmless.
+
 ---
 
 ## 3. Repository map
 
 ```
-main.py                     entry point: logging → QApplication → theme → MainWindow
+main.py                     entry point: logging → QApplication → theme → MainWindow (also of the .exe)
 config/defaults.toml        every numeric threshold of ingest/analysis
+assets/app.ico              application icon (scripts/make_icon.py)
+packaging/                  lmu_telemetry.spec - the PyInstaller build (scripts/build_exe.ps1)
 lmu_telemetry/
   shared/                   cross-cutting kernel; imports nothing from the project
     strings.py                every user-visible string (pure data)

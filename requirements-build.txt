@@ -1,0 +1,10 @@
+# Build-only dependencies: what turns the application into LMU Telemetry.exe.
+# Not needed to run or test it from source (see requirements.txt).
+#
+#     .venv\Scripts\python.exe -m pip install -r requirements-build.txt
+#     .\scripts\build_exe.ps1
+
+-r requirements.txt
+
+pyinstaller==6.22.3                 # first release line verified with Python 3.14 here
+pyinstaller-hooks-contrib==2026.10  # hooks for scipy, matplotlib, pyqtgraph

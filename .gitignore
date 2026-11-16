@@ -30,3 +30,7 @@ docs/screenshots/*.tmp.png
 .claude/settings.local.json
 Thumbs.db
 desktop.ini
+
+# PyInstaller (scripts/build_exe.ps1): rebuilt from source, ~320 MB
+build/
+dist/
