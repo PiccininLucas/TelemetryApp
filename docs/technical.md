@@ -97,24 +97,53 @@ properties) and run anywhere. Five modules use a real session when one is found
 
 CI (`.github/workflows/tests.yml`): ubuntu, Python 3.13 and 3.14, `pytest -q`.
 
+### Packaging (`LMU Telemetry.exe`)
+
+`scripts/build_exe.ps1` installs `requirements-build.txt` (PyInstaller, pinned),
+runs `packaging/lmu_telemetry.spec` and smoke-tests the output; `-Shortcut` adds
+a desktop shortcut. Output: `dist/LMU Telemetry/` - a one-folder, windowed build
+(~310 MB), the .exe beside `_internal/`. `build/` and `dist/` are git-ignored.
+
+- **Bundled data:** `config/defaults.toml` → `_internal/config/` (where
+  `config.DEFAULT_CONFIG_PATH`, two levels above the package, resolves inside the
+  .exe) and `assets/app.ico` → `_internal/assets/` (found through
+  `main.RESOURCE_ROOT` = `sys._MEIPASS` when frozen). User data stays in
+  `%USERPROFILE%\.lmu-telemetry`, outside the build.
+- **Excluded:** tkinter, PyQt5/6, PySide2, IPython, pytest, pyqtgraph.opengl and
+  unused Qt modules (WebEngine, 3D, Multimedia, Quick/QML, Pdf).
+- **`main.py --smoke-test [png]`** builds the window, lets it open the default lap,
+  optionally saves a screenshot, logs "Smoke test passed" and exits 0. The build
+  script runs it on the .exe against the demo session imported into a throwaway
+  `LMU_TELEMETRY_DATA_DIR` and fails unless the log shows the lap loaded;
+  `tests/test_packaging.py` runs it on the source, and checks every file the spec
+  bundles exists where the code looks for it.
+- **Icon:** `scripts/make_icon.py` draws `assets/app.ico` (seven sizes, each drawn
+  at its size) from the theme's surface and accent.
+- PyInstaller warns `Hidden import "scipy.special._cdflib" not found`: a hook
+  for a module newer SciPy no longer has; harmless.
+
 ---
 
 ## 3. Repository map
 
 ```
-main.py                     entry point: logging → QApplication → theme → MainWindow
+main.py                     entry point: logging → QApplication → theme → MainWindow (also of the .exe)
 config/defaults.toml        every numeric threshold of ingest/analysis
+assets/app.ico              application icon (scripts/make_icon.py)
+packaging/                  lmu_telemetry.spec - the PyInstaller build (scripts/build_exe.ps1)
 lmu_telemetry/
   shared/                   cross-cutting kernel; imports nothing from the project
     strings.py                every user-visible string (pure data)
     errors.py                 TelemetryError hierarchy
     config.py                 Config (dotted-path access), load_config (lru_cache'd)
     logging_config.py         setup_logging, get_logger
-    formatting.py             format_lap_time, format_gap, format_value
+    formatting.py             every number on screen: lap/sector time, seconds, gap,
+                              speed (m/s in, km/h out), distance, channel value
   domain/                   numpy/scipy/stdlib only
     models.py                 SessionInfo, Lap, LapFlag, Corner, Stint, filename parser, SHA-256
     units.py                  unit conversion driven by the file's own `unit` column
     records.py                SessionRow, LapRow, CornerReference (catalog rows)
+    official_tracks.py        official turn numbers/names per LMU circuit (LMU wiki), `find_track`
     resampling.py             resample_to_grid, step_interpolate (pure numpy)
     analysis/                 numpy in, numbers out
       distance.py  resample.py  delta.py  corners.py  ideal_lap.py
@@ -138,8 +167,11 @@ lmu_telemetry/
     storage/                  paths.py, catalog.py (DuckDB), cache.py (JSON manifest), importer.py
     export/                   charts.py (matplotlib), tables.py (CSV), report.py (PDF), anonymise.py
   presentation/             PySide6
-    main_window, session_state, import_worker, session_browser, chart_panel,
-    track_map, gg_panel, corner_table, consistency_panel, theme
+    main_window (composition only), lap_view, window_actions, exporting,
+    session_state, import_worker, status_line, notice_banner, session_browser,
+    plotting, chart_widgets, chart_panel, track_map, gg_panel, corner_table,
+    grouped_header, consistency_panel, chip_group, theme,
+    session_header, lap_list, corner_detail
 scripts/                    CLI tools (section 2)
 tests/                      pytest suite + synthetic data builders
 data/demo/                  one anonymised session, the only .duckdb tracked in git
@@ -330,7 +362,8 @@ lap window (t_start..t_end)
        (refused if scale outside [0.9, 1.1] → raw integral kept)
   → resample everything onto a 1 m distance grid       resample.resample
   → elapsed_time(distance) , lateral/longitudinal g    delta.elapsed_time, _accelerations_on
-  → corners.detect_corners(speed, brake, throttle)
+  → corners: official turns (corners_at_anchors) when the circuit is known and
+    calibrated, else corners.detect_corners(speed, brake, throttle)
   → LapAnalysis
 ```
 
@@ -367,6 +400,22 @@ Frozen, slotted dataclasses are the result type everywhere
 `ConsistencyReport`, `FrictionEnvelope`, `TrackPath`, …). `Corner` lives in
 `domain/models.py` because both `analysis` and the UI need it.
 
+Official turns (`official_tracks.py`, `corners.corners_at_anchors`): the speed-based
+detector cannot see a turn taken flat out (Fuji has 16 turns, the detector finds 7).
+For a circuit in `official_tracks.TRACKS` whose listed turns all have an `anchor_m`
+(distance of the apex from the line) and whose length matches the lap
+(`OfficialTrack.fits_lap`, 5 %), `pipeline._detect_corners` measures one corner per turn
+and labels it `T<n> <name>`. Numbers and names come from the LMU wiki Track Guides;
+where the wiki is silent the field is `None`, never a guess. The wiki gives no
+distances, so anchors were read off a recorded lap's GPS heading and cross-checked on
+other sessions: every speed minimum the old detector finds lies within ~45 m of an
+anchor. Calibrated: Fuji, Monza, Spa, Le Mans, COTA, Interlagos, Portimão, Bahrain
+(5.4 km layout only), Imola. Not calibrated, so they keep the speed-based `C<n>`
+corners: Silverstone (no session with a complete lap), Sebring, Paul Ricard, Qatar.
+Confidence is lowest for turns taken flat out in a continuous arc (Imola 1/8/10/13/16/19,
+Interlagos 9/10 and 13-15, the COTA esses). A user's own corner name (catalog, by
+distance) still overrides the official label.
+
 Corner measurements (`Corner`): apex distance, minimum speed, entry speed and
 braking point (start of the last sustained brake run before the apex), throttle resumption,
 coasting time, trail-braking length, window start/end, optional name.
@@ -388,6 +437,17 @@ Everything lives under `LMU_TELEMETRY_DATA_DIR` (default `~/.lmu-telemetry`):
 `session_id` = SHA-256 of the source file (content-addressed). A lap id is
 `<session_id>:<lap_index>`. Both are natural keys, so re-importing is idempotent.
 Game files are only ever opened read-only; nothing is written next to them.
+
+**Sessions whose file was deleted leave the catalog.**
+`catalog.forget_missing_sessions` (through `CatalogGateway.forget_missing_sessions`,
+which also clears their cache) drops every session whose source file is gone
+*while its folder still exists*; a missing folder is taken for a drive not
+mounted, and those sessions are kept. Corner names are per track and survive.
+The window runs it on every catalog reload (status: *"n sessão(ões) removida(s)
+da lista"*) and when opening a session fails with `SessionFileMissingError` (a
+`SessionFileError` subclass raised by `duckdb_reader.open_session`), in which case
+the session leaves the list with a warning instead of an error, and a pinned
+reference from it is released.
 
 ### Catalog schema (`catalog.py`, `SCHEMA_VERSION = 1`)
 
@@ -426,31 +486,129 @@ going past a bad file, returning `(results, failures)`.
 
 ### Window composition (`MainWindow`)
 
-The traces are the window's centre; everything else is a `QDockWidget`, so each
-panel can be hidden, moved, tabbed with another or floated.
+A summary strip across the top, the traces in the centre, and everything else a
+`QDockWidget`, so each panel can be hidden, moved, tabbed with another or floated.
 
 ```
 ┌ menu bar ──────────────────────────────────────────────────────────────────────┐
 ├ toolbar: import · refresh │ comparison · pin │ axis │ export PNG · PDF ─────────┤
+├ toolbar_header (SessionHeader): track · car │ lap · reference · Δ │ S1 S2 S3 │  ┤
+│                                  best of session · ideal lap                   │
 ├────────────────┬─────────────────────────────────────┬─────────────────────────┤
-│ dock_sessions  │ warning banner (amber)              │ dock_map   (TrackMap)   │
-│ SessionBrowser │ ChartStack (centre widget)          ├─────────────────────────┤
-│ track▸car▸     ├─────────────────────────────────────┤ dock_gg    (g-g)        │
-│ session▸lap    │ dock_corners: CornerTable |         │                         │
-│                │               ConsistencyPanel      │                         │
-├────────────────┴─────────────────────────────────────┴─────────────────────────┤
+│ dock_sessions  │ NoticeBanner (amber / red)          │ dock_map   (TrackMap,   │
+│ SessionBrowser │ ChartStack (centre widget)          │   corners T1..Tn)       │
+├────────────────┤                                     ├─────────────────────────┤
+│ dock_laps      │                                     │ dock_gg    (g-g)        │
+│ LapList        │                                     │                         │
+├────────────────┴──────────────┬──────────────────┬───┴─────────────────────────┤
+│ dock_corners (CornerTable)    │ dock_detail      │ dock_consistency            │
+│                               │ (CornerDetail)   │ (ConsistencyPanel)          │
+├───────────────────────────────┴──────────────────┴─────────────────────────────┤
 │ status bar                                                                     │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The side docks run the full height (`setCorner`), so the corner tables sit under
-the traces they are read against. The arrangement is saved to `QSettings` when the
-window closes and restored on the next run; `Painéis ▸ Restaurar layout padrão`
-(`MainWindow.reset_layout`) puts everything back. A saved state is applied only if
-it was written under the current `LAYOUT_STATE_VERSION` and `restoreState`
-accepts it; otherwise the default is used. Bump the version when a dock is added,
-removed or renamed — the dock object names (`dock_sessions`, `dock_corners`,
-`dock_map`, `dock_gg`) are what saved layouts are keyed on.
+- **`SessionHeader`** (`session_header.py`) — a non-movable toolbar on its own row
+  (`addToolBarBreak`), so it spans the window above the side columns. Fed a
+  `SessionSummary` the window assembles in `_session_summary`. Session-best sectors
+  are drawn in the `BEST` tone; the delta is green/red *and* signed. Its figures sit
+  in a horizontal `QScrollArea`, so the header never sets the window's minimum width.
+- **`LapList`** (`lap_list.py`) — every lap of the open session in driving order:
+  time, S1–S3, gap to the best, status. Best lap and best sectors are computed among
+  **comparable** laps only (`best_lap`, `best_sectors`); non-comparable laps are
+  listed but dimmed; the reference lap is tagged `ref`. Picking a row calls
+  `SessionBrowser.select_lap`, so a lap is always opened through the browser and
+  the two never disagree.
+- **`SessionBrowser`** (`session_browser.py`) — *which session*; the lap list
+  answers *which lap of it*. Search (every word, any order, case- and
+  accent-insensitive, over track, car, class, type, date, weather) and three
+  filter combos (track; car, narrowed to the chosen track; session type) over a
+  list grouped by **track · car** — the unit laps are comparable in — groups and
+  sessions newest first. A session row: date · type, best comparable lap in the
+  `BEST` tone, lap count; dimmed when no lap is comparable; tagged `ref` when it
+  holds the pinned reference (`mark_reference`). Choosing a session opens its best
+  comparable lap (or its first lap when none is comparable); coming back to the
+  open session keeps the lap on screen. Empty catalog → *Importar sessão…* /
+  *Importar pasta…* buttons (`import_requested`, `import_folder_requested`); no
+  match → *Limpar filtros*. Keyboard: Ctrl+F (`commands.find_session`, reopens the
+  dock) → search; Down/Enter → list (opening the first match); Esc clears; arrows
+  skip group headings (`_SessionList.moveCursor`). Matching is the pure
+  `session_matches(SessionRow, BrowserFilter)`.
+- **`CornerTable`** (`corner_table.py`) — one row per corner, **always in lap
+  order** (`setSortingEnabled(False)` on purpose; a ranking would destroy the
+  reading). Three column groups, each under a band in the header
+  (`GroupedHeader`, below): *Nesta volta* (apex, min/entry speed, braking, trail,
+  coasting), *Contra a referência* (`COMPARISON_COLUMNS`: ΔV mín, Δt) and *Contra
+  a volta ideal* (`IDEAL_COLUMNS`: best lap, gain); the last two are hidden as a
+  block when there is nothing to compare. The name column is editable and has no
+  group; a rename emits `corner_renamed(index, apex_m, name)`. **The costliest
+  corner** - `pipeline.costliest_corner(rows)`, below - is marked without moving:
+  a `WARNING` bar at the row's left edge (`theme.standout_brush`,
+  `STANDOUT_BAR_WIDTH`), every cell in `theme.emphasised` weight, and "▸" before
+  the name. Bar and mark are drawn by `_MarkDelegate` (`initStyleOption`,
+  `paint`, `sizeHint`), never written into the text, so the editor and the
+  catalog never see them. The deciding figure keeps its meaning: "A ganhar" in
+  `WARNING`, or Δt in `LOSS`. No tint behind the row: `LOSS` text is 4.6:1 on a
+  panel and fell to 3.7:1 on a 12% warm tint. Coasting ≥ `COASTING_WARNING_S`
+  (0.25 s) is `WARNING` (`coasting_tone`, shared with the card). The ideal-lap
+  summary line above the table wraps, so it never sets the dock's width.
+- **`GroupedHeader`** (`grouped_header.py`) — Qt has no grouped header. One
+  `QHeaderView` a band taller (`band_height`, 16 px at the caption size): each
+  section paints its label in the lower part (`paintSection` with a shifted
+  rect), and `paintEvent` paints the group labels (`ColumnGroup(label,
+  columns)`) over the top, **computed from the sections' geometry on every
+  paint** (`group_span`), so scrolling, resizing and hidden columns need no
+  syncing; a fully hidden group draws nothing. Labels are centred and elided to
+  their columns, never widening them; the band's tooltip and each column's
+  tooltip name the group. Font and colours from `theme.header_band()`.
+- **Costliest corner** — `pipeline.costliest_corner(rows) → CostliestCorner |
+  None` (`position`, `seconds`, `basis: CostBasis`). With any `gain_s` present
+  (an ideal lap), the largest positive gain; else with any `delta_s` (a
+  comparison), the largest positive delta; else none. The ideal lap decides as
+  soon as it exists - no fallback to the comparison when nothing is left to gain;
+  non-finite values skipped; ties to the first corner. Pure, no Qt; the table and
+  the card both call it on the same rows, so they cannot disagree.
+- **`CornerDetail`** (`corner_detail.py`) — the corner under the cursor, figures
+  labelled in words: this lap, against the reference, against the ideal lap (the
+  section titles are the table's group labels). Picks the corner by nearest
+  apex, the same rule as `CornerTable.select_corner_at`. On the costliest corner
+  it shows `costliest_flag` ("▸ A curva que mais custa · 0.262 s a ganhar contra
+  a volta ideal", `WARNING`, emphasised; `shows_costliest`), and the gain is
+  `WARNING` there only. A missing figure is "--", never "-- km/h". Scrolls
+  rather than imposing its height on the bottom row.
+- **`ConsistencyPanel`** (`consistency_panel.py`) — per stint: the ranking (worst
+  first, from the analysis; not re-sortable; name column sized to content, spare
+  width to the last), and the selected corner lap by lap with mean and ±1σ band.
+  Warning cut-offs from `ui.consistency.*`. One row of controls: **stint chips**
+  on the left, shown only with more than one stint (`stint_changed(index)`), and
+  **measure chips** on the right (`METRICS`: chip text with unit, e.g. "V mín
+  (km/h)"; full name with unit for the axis, tooltip and accessible name; the
+  plot title carries the unit). The measure survives a change of stint and of
+  lap. The summary has a line of its own and wraps. A stint too short to measure
+  shows the placeholder but keeps the stint chips (`show_report` →
+  `_clear_report`); `clear()` hides them too.
+- **`ChipGroup`** (`chip_group.py`) — exclusive chips (`QToolButton`,
+  `role="chip"`, in an exclusive `QButtonGroup`): `set_options(labels,
+  descriptions, current)`, `current_index`, `set_current_index` (silent),
+  `chosen(index)` for the user's picks only. Keyboard as radio buttons (Qt's
+  own for exclusive groups): Tab stops on the chosen chip, arrows move the
+  choice. Laid out by `FlowLayout`, which wraps instead of widening: its minimum
+  width is the widest chip, its height follows its width.
+- **Corner numbers** — the map (`TrackMap.set_corner_labels`) and the traces show
+  the short form of a corner's label (`_short_label`: "T6 Hairpin" → "T6"; a user's
+  own name or a detector "C4" stays whole).
+
+The bottom row runs the full width (`setCorner` gives both bottom corners to the
+bottom area) because the corner table has eleven columns. Default sizes are
+fractions of the window (`_arrange_docks`), and the initial size is capped to the
+screen (`_initial_size`). The arrangement is saved to `QSettings` when the window
+closes and restored on the next run; `Painéis ▸ Restaurar layout padrão`
+(`MainWindow.reset_layout`) puts everything back, header included. A saved state is
+applied only if it was written under the current `LAYOUT_STATE_VERSION` (now **2**)
+and `restoreState` accepts it; otherwise the default is used. Bump the version when
+a dock is added, removed or renamed — the object names (`dock_sessions`,
+`dock_laps`, `dock_corners`, `dock_detail`, `dock_consistency`, `dock_map`,
+`dock_gg`, `toolbar_main`, `toolbar_header`) are what saved layouts are keyed on.
 
 The toolbar reuses the menu's `QAction` objects, so checked and enabled state is
 shared. It shows each action's `iconText` — a short wording — while the menu keeps
@@ -459,7 +617,33 @@ the full text and the tooltip carries it too.
 The window takes its collaborators as arguments: `MainWindow(gateways, settings=None)`.
 `settings` is injectable so tests never touch the user's real settings.
 
-### State objects (`session_state.py`; `ImportWorker` in `import_worker.py`)
+**`main_window.py` only builds and connects** (docks, layout persistence, and
+`_connect`, where every signal is wired). It does not import `pipeline` — a test
+holds that. The work it used to do lives beside it:
+
+| Module | Role |
+| --- | --- |
+| `lap_view.py` | `compose(sessions, selection, mode, pinned) → LapView`: the benchmark choice and its refusals, delta, ideal lap, corner rows, stint, map and g-g figures, header summary and status line, all as plain values. No widgets; testable without a window. `LapView.figures` is `None` when the lap cannot be analysed. |
+| `window_actions.py` | `WindowActions` (`window.commands`): every `QAction`, the menus, the main toolbar. Parameterised choices are typed signals (`comparison_chosen`, `axis_chosen`, `channel_toggled`, `map_colour_chosen`); `offer_*` / `allow_time_axis` keep the actions honest. |
+| `exporting.py` | `LapExporter` (`window.exporter`): the four exports sharing one dialog/suffix/dialect/error path, reporting through its `status` signal; `suggested_name`, `report_context(CurrentView)`. |
+| `import_worker.py` | `ImportWorker` (the work) and `ImportRunner` (`window.importer`: one run at a time on a `QThread`, `busy_changed`, `stop()` on close). |
+| `status_line.py` | `StatusLine` (below). |
+| `notice_banner.py` | `NoticeBanner` (below). |
+
+**Status line.** A *resting line* describes the lap on screen (`rest`); a
+*notice* — exported, pinned, layout restored — interrupts it for 6 s (`notify`)
+and the resting line comes back, so the bar never keeps describing something that
+is gone. Progress that will end with its own message is `notify(..., sticky=True)`.
+The analysis time sits apart as a permanent, muted label on the right
+(`set_timing`), not in the lap's line.
+
+**Notice banner.** One note per line (bulleted when there are several), two
+severities — `WARNING` (amber: drawn, with a caveat) and `ERROR` (red: nothing to
+trust, e.g. the session file cannot be opened) — styled by the theme through the
+frame's `severity` property, and a dismiss button that hides it until the next lap
+brings notes of its own.
+
+### State objects (`session_state.py`; `ImportWorker`/`ImportRunner` in `import_worker.py`)
 
 - **`SessionPool`** — LRU of at most **2** open `Session`s (enough for a
   comparison against a pinned lap from another file). Evicting closes the DuckDB
@@ -470,16 +654,17 @@ The window takes its collaborators as arguments: `MainWindow(gateways, settings=
   delta, ideal, corner rows, consistency). **Exports read from this**, never
   recompute, so a file always matches what the user was looking at.
 - **`ImportWorker`** — imports files on a `QThread` with its own catalog
-  connection; emits `progress` and `finished`. Everything else in the window still
-  runs on the interface thread.
+  connection; emits `progress` and `finished`. **`ImportRunner`** owns the thread:
+  refuses a second run, emits `busy_changed`, and `stop()` lets the current file
+  finish. Everything else in the window still runs on the interface thread.
 - **`ComparisonMode`** — `NONE`, `SESSION_BEST` (default), `PINNED`, `IDEAL`.
 
 ### Interaction flow
 
-`SessionBrowser.lap_selected(LapSelection)` → `MainWindow.show_lap` → open session
-→ `analysis_for(lap)` → `session_analysis()` (ideal lap) → choose benchmark →
-`pipeline.delta_*` → fill chart, markers, corner table, consistency, map,
-g-g → warnings → status line with timing.
+`SessionBrowser.lap_selected(LapSelection)` → `MainWindow.show_lap` →
+`lap_view.compose` (open session → `analysis_for(lap)` → `session_analysis()` →
+choose benchmark → `pipeline.delta_*` → figures) → `MainWindow._show` hands each
+panel its part → notices → resting status line; timing on the right.
 
 **One cursor for the whole window:** `chart.cursor_moved`, `track_map.distance_picked`,
 `corner_table.corner_selected` and `consistency.corner_selected` all feed
@@ -489,6 +674,47 @@ Corner rename: `CornerTable.corner_renamed(index, distance, name)` →
 `MainWindow.rename_corner` → `CatalogGateway.set_corner_name` → every open session
 re-applies names and drops its `SessionAnalysis` → `show_lap` again.
 
+### Theme (`presentation/theme.py`)
+
+Two layers: a `Palette` (four surface steps, three text steps, one accent, the
+corner radius, the type families and a `TypeScale`) and semantic roles read from it
+(`BACKGROUND`, `SURFACE`, `SURFACE_RAISED`, `BORDER`, `TEXT*`, `ACCENT`,
+`PLOT_BACKGROUND`, `TYPE`). Panels use the roles, never a hex literal.
+
+**Type scale** (`TYPE`, pixels): `micro` 10 (turn numbers on the map), `caption` 11,
+`label` 12 (headers, dock and plot titles), `body` 13, `stat` 15, `title` 17. Every
+`font-size` in the style sheet is a step; text pyqtgraph draws uses
+`PLOT_TEXT_SIZE` or `theme.font(step)`.
+
+**Tones** say what a coloured figure *means*: `Tone.GAIN`, `LOSS`, `BEST`,
+`WARNING`, `DIM` (`TONE_COLOURS`). `theme.verdict(value, higher_is_better=...)` is
+the single gain/loss rule shared by the corner table, the corner card, the header
+and the trace readout. On a `QLabel` a tone is a dynamic property the style sheet
+selects on (`theme.set_tone`, which re-polishes); on a table or tree item, which no
+style sheet reaches, it is a foreground (`theme.tone_colour`). Other helpers:
+`theme.emphasised(font)` (the one emphasis weight), `theme.figures(font)`
+(tabular digits), `theme.standout_brush()` / `STANDOUT_BAR_WIDTH` (the bar
+beside the one row that stands out), `theme.header_band()` (font and colours of
+a hand-painted header band - no style sheet reaches it), and `theme.set_series(label, key)` - a figure coloured as the
+chart series it was read from (`SERIES_COLOURS`: primary, comparison, ideal,
+throttle, brake), again a style-sheet property. No panel builds HTML. Widgets are transparent by default; only the window,
+the panels (docks and the `#central` card) and the widgets Qt paints itself name a
+surface, which is what lets a panel be a card without every label carrying a
+background.
+
+**Data colours are not in the palette** (reference/comparison/ideal traces, pedal
+states, `GAIN`/`LOSS` and their fills, the map's `LOSS_SCALE`): they mean the same
+thing whatever the chrome looks like. The identity rests on one rule: **the accent
+is never a data colour**.
+
+`tests/test_theme.py` holds it (hue distance from every data colour), together with
+AA contrast for text and accent, a style sheet that parses and uses only known
+properties, font sizes drawn from the scale, a reference/comparison pair that stays
+apart under simulated protanopia, deuteranopia and tritanopia (Machado 2009, CIE76
+ΔE ≥ 40), and two guards over every other module in `presentation/`: **no colour
+literal and no `setStyleSheet`**. The print palette in `infrastructure/export/`
+(white paper) is separate by design. Dark only; there is no light theme.
+
 ### Rules baked into the UI
 
 - Two laps are only ever compared on the **distance axis**; the time axis action
@@ -497,20 +723,64 @@ re-applies names and drops its `SessionAnalysis` → `show_lap` again.
   **car** is allowed with a warning.
 - The ideal lap chart shows **speed only** — it has no pedal/steering trace
   because nobody drove it.
-- Dimmed (not hidden) laps in the browser: partial/invalidated/pit laps.
+- Dimmed (not hidden): partial/invalidated/pit laps in the lap list, and sessions
+  with no comparable lap in the browser.
 
 ### Other UI facts
 
 - `chart_panel.ROW_SPECS` is the single description of the stacked rows (speed,
   pedals, steering, gear, RPM, delta); `DEFAULT_ROWS` = speed, pedals, delta.
   Scales (m/s→km/h, fraction→%) are applied at this edge only.
+- **Every plot is made by `plotting.make_plot`**: themed background, quiet axes
+  (line in `BORDER`, numbers `TEXT_MUTED`, no tick marks, caption-size tabular
+  tick font, no SI prefix), grid, axis titles via `plotting.set_label`. The traces,
+  map, g-g and consistency chart all use it.
+- **Static layers are cached** (`plotting.freeze`, `DeviceCoordinateCache` on
+  curves, fills, scatters and axes; never on the cursor). Two things keep the
+  cache valid, and both are load-bearing: `plotting.reserve_cache` raises Qt's
+  global `QPixmapCache` from 10 MB to 64–256 MB by screen size (at 10 MB the rows
+  evicted each other and every move missed), and rows fit their Y range once per
+  lap (`chart_panel._fit_y`) instead of leaving pyqtgraph's auto-range on, which
+  re-applies the range on every paint and discards the caches. Pens are
+  **cosmetic** (`LineStyle.pen`): widths are pixels, not data units. One
+  visible effect, accepted: a cached axis draws its text with greyscale
+  antialiasing, because a cache pixmap is transparent and subpixel (ClearType)
+  needs an opaque surface. Dropping the axis cache to get ClearType back costs
+  repaint 3 → 32 ms and pan 38 → 90 ms. `test_caching_does_not_change_a_pixel`
+  compares with text aliased for that reason.
+  `scripts/bench_charts.py` (13 600 m lap, 6 rows, 2 laps + delta): cursor move
+  86 → 4 ms, repaint 95 → 3 ms, pan 115 → 38 ms, load 120 → 88 ms.
+- **Colour is never the only cue.** The comparison lap is dashed in every row
+  (`chart_panel.line_style`); its readout figure is italic. Map classes differ by
+  width and dash as well as colour (`track_map.PEDAL_STYLES`, `LOSS_STYLES`:
+  losing solid and wider with the rate, gaining dashed); a test holds that no
+  two classes share a (width, dash) pair. Keys (`chart_widgets.LineKey`) draw
+  each line as it is drawn.
+- **Above the traces** (`ChartStack.chrome`, a strip that scrolls sideways when
+  narrow): the key (`LapTrace.key` - "Volta 5", "Ref. · volta 3"; the full label
+  is the tooltip), the channel chips (the window's `commands.channels` actions
+  via `set_channel_actions`, short `RowSpec.chip` names), and the readout - one
+  `ReadoutCell` per quantity with a minimum width from its widest figure
+  (`Series.widest`), so the row holds still. `ChartStack.readout_at(x)` returns
+  the figures as data.
 - `chart_panel`, `track_map` and `gg_panel` take numpy arrays and labels, not
   sessions, so they are testable with tiny arrays.
 - `theme.apply` must run **before** any widget is built (pyqtgraph reads its
   globals at construction). Fixed left-axis width keeps stacked rows aligned.
 - **All user-visible text is in `shared/strings.py`** (~620 lines). The one-way
   rule: strings is a leaf. Adding UI text means adding a constant there.
-- `formatting.py`: `format_lap_time`, `format_gap`, `format_value`.
+- **`formatting.py` is the one place a number becomes text.** `format_lap_time`
+  (m:ss.mmm), `format_sector_time`, `format_seconds(s, decimals=3)` (a time,
+  unsigned), `format_gap(s, decimals=3)` (a difference, always signed),
+  `format_speed(m_s, signed=False)` (m/s in, km/h to a tenth out - the only
+  place that conversion is done for display), `format_distance(m, decimals=0)`,
+  `format_value(v, decimals)` (a readout figure already in display units). Each
+  returns the number without its unit (headers and `strings` templates carry
+  it) and `MISSING` ("--") for None, NaN or ±inf. Signed forms round first, so
+  a difference that shows as zero is "+0.000", never "-0.000". Templates in
+  `strings.py` take the formatted text (`{std}`, not `{std:.3f}`).
+  `tests/test_formatting.py` holds every helper against None, NaN, ±inf, zero,
+  negatives and values that round to zero.
 
 ---
 
@@ -528,7 +798,7 @@ No Qt imports (matplotlib is forced to Agg), so it runs in CI or over SSH.
 The exports **redraw** with matplotlib instead of screenshotting pyqtgraph, so the
 unit conversions must stay shared to keep exported numbers equal to on-screen ones.
 `ReportContext` holds the analysis objects as `object` (to avoid importing
-`pipeline` types into `export`); it is assembled by `MainWindow._report_context`
+`pipeline` types into `export`); it is assembled by `exporting.report_context`
 or by `scripts/export_session.py`.
 
 ---
@@ -629,7 +899,7 @@ session at that track is re-imported with `--force`.
 
 ### Fixed — performance and responsiveness
 
-**P1 (partly) — Importing no longer freezes the window.** `MainWindow._import`
+**P1 (partly) — Importing no longer freezes the window.** `ImportRunner`
 runs `ImportWorker` on a `QThread` with its own catalog connection, shows
 progress in the status bar, refuses a second import while one runs, reports an
 unexpected crash as a failure instead of losing it, and `closeEvent` cancels and
@@ -700,9 +970,10 @@ alone); CI also runs on `windows-latest`.
   `resample.align_to_common_grid` / `resample_channels`,
   `friction.envelope_for_window` / `combined_magnitude`,
   `distance.speed_from_distance`, `time_base.common_grid`,
-  `channel_registry.channels_by_format`, `catalog.forget_session` / `corner_names`,
+  `channel_registry.channels_by_format`, `catalog.corner_names`,
   `importer.load_cached`, `corrections.reference_*_g`. Delete any when sure it
-  will not be wired; there is no UI for forgetting a session yet.
+  will not be wired. (`catalog.forget_session` is now used, by
+  `forget_missing_sessions`; there is still no UI to forget a session by hand.)
 - **A few constants remain in code:** `corrections.reference_lateral_g`'s track
   width (1.6 m, a parameter used only by tests). Everything else numeric is in the
   configuration.
@@ -711,8 +982,11 @@ alone); CI also runs on `windows-latest`.
 - **The B2 guard** and the corner-name anchor drift under B1 (above).
 - `conftest.DEFAULT_TELEMETRY_DIRS` lists two Steam paths on this machine's
   layout; `LMU_TELEMETRY_DIR` already overrides them.
-- A new Windows CI job has not run yet: the first push will show whether anything
-  behaves differently there.
+- **CI runs only on pull requests and on pushes to `main`** (`tests.yml`), not
+  on pushes to a feature branch. Its first run (2026-11-26, PR #4) passed on
+  Windows and failed one pixel test on Ubuntu, the only runner whose offscreen
+  platform has fonts; see the cache note in section 9. Text-dependent pixel
+  tests have to allow for that.
 
 ---
 
@@ -736,8 +1010,8 @@ warning from PySide6 6.11 / numpy 2.5 / pandas 3.0 / DuckDB 1.5 on 3.14.
 **Add a channel row to the chart.** Add the channel name to `pipeline.CONTINUOUS_CHANNELS`
 (or `DISCRETE_CHANNELS`) so it is resampled onto the distance grid, add a
 `RowSpec` to `chart_panel.ROW_SPECS` with its `Series` (scale/decimals), add the
-label constants to `strings.py`. The View ▸ Channels menu is generated from
-`ROW_SPECS`. Add the column to `tables.CHANNEL_COLUMNS` if it should reach the CSV.
+label constants to `strings.py` (axis title, readout caption, chip name). The
+View ▸ Channels menu and the chips are generated from `ROW_SPECS`. Add the column to `tables.CHANNEL_COLUMNS` if it should reach the CSV.
 
 **Add or change a threshold.** Add the key to `config/defaults.toml` with a comment
 that says *why that value*. If it is in `[analysis.corners]` or `[analysis.delta]`,
@@ -766,5 +1040,5 @@ if the G-force labelling was fixed, it fails on purpose, and `corrections.py` mu
 change.
 
 **Add a comparison mode.** Extend `ComparisonMode`, handle it in
-`MainWindow._benchmark_selection`/`_show_lap`, add the menu action in
-`_build_comparison_actions` and strings; delta arrays come from `pipeline`.
+`lap_view.benchmark_selection_for`/`compose`, add it to `COMPARISON_MODES` and the
+labels in `window_actions.py` and strings; delta arrays come from `pipeline`.

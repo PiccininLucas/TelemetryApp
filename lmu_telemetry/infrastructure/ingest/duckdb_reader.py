@@ -23,7 +23,9 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from lmu_telemetry.shared.errors import SchemaError, SessionFileError
+from lmu_telemetry.shared.errors import (
+    SchemaError, SessionFileError, SessionFileMissingError,
+)
 from lmu_telemetry.shared.logging_config import get_logger
 from lmu_telemetry.shared import strings
 
@@ -60,7 +62,7 @@ def open_session(path: Path | str) -> duckdb.DuckDBPyConnection:
     """
     path = Path(path)
     if not path.is_file():
-        raise SessionFileError(strings.ERR_FILE_NOT_FOUND.format(path=path))
+        raise SessionFileMissingError(strings.ERR_FILE_NOT_FOUND.format(path=path))
 
     try:
         # read_only also prevents DuckDB from creating an empty database when

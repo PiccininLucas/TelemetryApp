@@ -57,22 +57,73 @@ def _hidden(dock: QtWidgets.QDockWidget) -> bool:
 def test_the_traces_are_the_centre_and_every_other_panel_is_a_dock(window):
     assert window.chart.parent() is window.centralWidget()
     assert {d.widget() for d in window.docks} == {
-        window.browser, window.tabs, window.track_map, window.friction,
+        window.browser, window.lap_list, window.corner_table,
+        window.corner_detail, window.consistency, window.track_map,
+        window.friction,
     }
 
 
 def test_docks_have_stable_object_names(window):
     """`saveState` keys the layout on them; a rename orphans every saved layout."""
     assert [d.objectName() for d in window.docks] == [
-        "dock_sessions", "dock_corners", "dock_map", "dock_gg",
+        "dock_sessions", "dock_laps", "dock_corners", "dock_detail",
+        "dock_consistency", "dock_map", "dock_gg",
     ]
 
 
 def test_docks_are_titled_by_what_they_hold(window):
     assert window.dock_sessions.windowTitle() == strings.BROWSER_TITLE
+    assert window.dock_laps.windowTitle() == strings.DOCK_LAPS
     assert window.dock_map.windowTitle() == strings.MAP_TITLE
     assert window.dock_gg.windowTitle() == strings.GG_TITLE
     assert window.dock_corners.windowTitle() == strings.DOCK_CORNERS
+    assert window.dock_detail.windowTitle() == strings.DOCK_DETAIL
+    assert window.dock_consistency.windowTitle() == strings.DOCK_CONSISTENCY
+
+
+def test_the_default_layout_puts_each_panel_where_the_plan_says(window):
+    """Sessions and laps on the left, map and g-g on the right, the corner
+    panels along the bottom."""
+    area = window.dockWidgetArea
+    Area = QtCore.Qt.DockWidgetArea
+    assert area(window.dock_sessions) == Area.LeftDockWidgetArea
+    assert area(window.dock_laps) == Area.LeftDockWidgetArea
+    assert area(window.dock_map) == Area.RightDockWidgetArea
+    assert area(window.dock_gg) == Area.RightDockWidgetArea
+    for dock in (window.dock_corners, window.dock_detail, window.dock_consistency):
+        assert area(dock) == Area.BottomDockWidgetArea
+
+
+def test_corners_and_consistency_sit_side_by_side_not_as_tabs(window):
+    assert window.tabifiedDockWidgets(window.dock_corners) == []
+    corners = window.dock_corners.geometry()
+    consistency = window.dock_consistency.geometry()
+    assert consistency.left() >= corners.right()
+
+
+def test_the_bottom_row_runs_the_full_width(window):
+    """The corner table has eleven columns; it gets the width, not the tree."""
+    assert window.corner(QtCore.Qt.Corner.BottomLeftCorner) == (
+        QtCore.Qt.DockWidgetArea.BottomDockWidgetArea
+    )
+    assert window.corner(QtCore.Qt.Corner.BottomRightCorner) == (
+        QtCore.Qt.DockWidgetArea.BottomDockWidgetArea
+    )
+
+
+def test_the_session_header_spans_the_top_on_its_own_row(window):
+    bar = window.header_bar
+    assert bar.objectName() == "toolbar_header"
+    assert window.toolBarArea(bar) == QtCore.Qt.ToolBarArea.TopToolBarArea
+    assert window.toolBarBreak(bar)
+    assert not bar.isMovable()
+    assert not bar.isHidden()
+
+
+def test_the_window_never_opens_larger_than_the_screen(window):
+    available = window.screen().availableGeometry()
+    assert window.width() <= available.width()
+    assert window.height() <= available.height()
 
 
 def test_every_dock_is_shown_floatable_and_closable_by_default(window):
@@ -109,11 +160,13 @@ def test_reset_layout_brings_back_hidden_docks_and_the_toolbar(window):
     for dock in window.docks:
         dock.hide()
     window.toolbar.hide()
+    window.header_bar.hide()
 
     window.reset_layout()
 
     assert all(not _hidden(d) for d in window.docks)
     assert not window.toolbar.isHidden()
+    assert not window.header_bar.isHidden()
     assert window.statusBar().currentMessage() == strings.STATUS_LAYOUT_RESET
 
 
@@ -129,37 +182,37 @@ def test_reset_layout_docks_a_floating_panel_again(window):
 def test_the_toolbar_reuses_the_menu_actions(window):
     """One QAction in both places, so checked and enabled state cannot drift."""
     in_bar = set(window.toolbar.actions())
-    assert window.action_import in in_bar
-    assert window.action_refresh in in_bar
-    assert window.action_pin in in_bar
-    assert window.action_distance in in_bar
-    assert set(window.comparison_actions.values()) <= in_bar
+    assert window.commands.import_files in in_bar
+    assert window.commands.refresh in in_bar
+    assert window.commands.pin in in_bar
+    assert window.commands.axis_distance in in_bar
+    assert set(window.commands.comparison.values()) <= in_bar
 
 
 def test_toolbar_buttons_use_short_labels_and_keep_the_full_tooltip(window):
     """Long menu wording pushed the last buttons into the overflow menu."""
-    best = window.comparison_actions[ComparisonMode.SESSION_BEST]
+    best = window.commands.comparison[ComparisonMode.SESSION_BEST]
     assert best.iconText() == strings.TOOLBAR_COMPARE_BEST
     assert len(best.iconText()) < len(best.text())
     assert best.toolTip() == best.text().replace("&", "")
-    assert window.export_actions["pdf"].iconText() == strings.TOOLBAR_EXPORT_PDF
+    assert window.commands.export["pdf"].iconText() == strings.TOOLBAR_EXPORT_PDF
 
 
 def test_the_time_axis_keeps_its_own_tooltip(window):
     """It explains why the axis is blocked during a comparison."""
-    assert window.action_time.toolTip() == strings.ACTION_AXIS_TIME_BLOCKED
+    assert window.commands.axis_time.toolTip() == strings.ACTION_AXIS_TIME_BLOCKED
 
 
 def test_choosing_a_comparison_in_the_toolbar_changes_the_mode(window):
-    window.comparison_actions[ComparisonMode.NONE].trigger()
+    window.commands.comparison[ComparisonMode.NONE].trigger()
     assert window._mode is ComparisonMode.NONE
 
 
 def test_import_actions_in_the_toolbar_are_disabled_while_importing(window):
-    window._import_actions_enabled(False)
-    assert not window.action_import.isEnabled()
-    window._import_actions_enabled(True)
-    assert window.action_import.isEnabled()
+    window.commands.set_import_enabled(False)
+    assert not window.commands.import_files.isEnabled()
+    window.commands.set_import_enabled(True)
+    assert window.commands.import_files.isEnabled()
 
 
 def test_the_toolbar_can_be_hidden_from_the_panels_menu(window):
@@ -250,5 +303,36 @@ def test_a_layout_saved_under_another_version_is_ignored(
     second = MainWindow(build_gateways(), settings)
     try:
         assert not _hidden(second.dock_map)  # default, not the stale layout
+    finally:
+        second.close()
+
+
+def test_the_session_header_can_be_hidden_from_the_panels_menu(window):
+    window.header_bar.toggleViewAction().trigger()
+    assert window.header_bar.isHidden()
+    assert window.header_bar.toggleViewAction() in window.commands.panel_toggles
+
+
+def test_a_layout_saved_before_the_new_panels_is_not_applied(
+    qt_app, tmp_path, monkeypatch, settings
+):
+    """A state saved under the old version names four docks; restoring it would
+    leave the three new ones stranded, so the default is used instead."""
+    from lmu_telemetry.infrastructure.storage import paths
+
+    monkeypatch.setenv(paths.ENV_DATA_DIR, str(tmp_path / "data"))
+    first = MainWindow(build_gateways(), settings)
+    first.show()
+    old_state = first.saveState(LAYOUT_STATE_VERSION - 1)
+    first.close()
+    settings.setValue("window/state", old_state)
+
+    second = MainWindow(build_gateways(), settings)
+    second.show()
+    try:
+        assert all(not _hidden(d) for d in second.docks)
+        assert second.dockWidgetArea(second.dock_laps) == (
+            QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
+        )
     finally:
         second.close()

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 import numpy as np
 
@@ -31,7 +32,7 @@ from lmu_telemetry.domain.analysis import (
 from lmu_telemetry.domain.analysis.corners import CornerDetectionSettings
 from lmu_telemetry.shared.config import Config, load_config
 from lmu_telemetry.domain.models import Corner, Lap, LapFlag
-from lmu_telemetry.domain import resampling
+from lmu_telemetry.domain import official_tracks, resampling
 from lmu_telemetry.application.ports import SessionData
 from lmu_telemetry.shared.logging_config import get_logger
 
@@ -181,7 +182,8 @@ def analyse_lap(
 
     lateral, longitudinal = _accelerations_on(session, times, reconstruction, grid_m)
 
-    detected = corners.detect_corners(
+    detected = _detect_corners(
+        session,
         on_distance["Ground Speed"],
         grid_m,
         on_distance.get("Brake Pos", np.zeros_like(grid_m)),
@@ -199,6 +201,50 @@ def analyse_lap(
         lateral_g=lateral,
         longitudinal_g=longitudinal,
     )
+
+
+def _track_name_of(session: SessionData) -> str | None:
+    """The game's name for the session's circuit, when the session knows it.
+
+    Read from `session.info` rather than threaded through every caller, so the
+    interface, the scripts and the export all see the same corners. A session
+    without an `info` - the synthetic ones the tests build - has no circuit, and
+    simply gets the speed-based detector.
+    """
+    return getattr(getattr(session, "info", None), "track_name", None)
+
+
+def _detect_corners(
+    session: SessionData,
+    speed_ms: np.ndarray,
+    grid_m: np.ndarray,
+    brake: np.ndarray,
+    throttle: np.ndarray,
+    settings: CornerDetectionSettings,
+) -> list[Corner]:
+    """The lap's corners: the circuit's official turns when they are known.
+
+    A circuit whose every turn has been placed on a lap (`is_calibrated`) is
+    measured turn by turn, numbered as on the track map, so a flat-out kink is
+    T7 rather than missing and the table agrees with the circuit's own signs.
+    Anything else - an unknown circuit, or one the wiki describes but nobody has
+    yet measured against a lap - falls back to finding corners from the speed
+    trace alone. A partly placed circuit is deliberately not used: half a
+    numbering would label some corners "T6" and leave their neighbours "C4".
+    """
+    official = official_tracks.find_track(_track_name_of(session))
+    if (
+        official is not None
+        and official.is_calibrated
+        and grid_m.size
+        and official.fits_lap(float(grid_m[-1]))
+    ):
+        measured = corners.corners_at_anchors(
+            speed_ms, grid_m, brake, throttle, official.anchors, settings
+        )
+        if measured:
+            return measured
+    return corners.detect_corners(speed_ms, grid_m, brake, throttle, settings)
 
 
 def _lap_time_grid(session: SessionData, lap: Lap, config: Config) -> np.ndarray:
@@ -543,6 +589,70 @@ class CornerRow:
     speed_delta_ms: float | None = None
     best_lap_index: int | None = None
     gain_s: float | None = None
+
+
+class CostBasis(StrEnum):
+    """What a corner's cost was measured against."""
+
+    #: Time to gain against the session's ideal lap (`CornerRow.gain_s`).
+    IDEAL = "ideal"
+    #: Time lost against the comparison lap (`CornerRow.delta_s`).
+    COMPARISON = "comparison"
+
+
+@dataclass(frozen=True, slots=True)
+class CostliestCorner:
+    """The corner that costs the lap the most time, and by how much.
+
+    Attributes:
+        position: Index into the rows, which are in lap order.
+        seconds: What it costs: time to gain, or time lost; always above zero.
+        basis: Which of the two that is.
+    """
+
+    position: int
+    seconds: float
+    basis: CostBasis
+
+
+def costliest_corner(rows: Sequence[CornerRow]) -> CostliestCorner | None:
+    """The one corner to work on next.
+
+    The single rule behind the corner table's marked row and the corner card's
+    flag, so the two can never point at different corners:
+
+    - with an ideal lap, the corner with the most to gain against it - the
+      ideal lap is built from the driver's own best, so that time is known to
+      be reachable;
+    - without one but with a comparison, the corner where the lap loses most to
+      the comparison lap;
+    - with neither, no corner.
+
+    The ideal lap decides as soon as it exists, even when nothing is left to
+    gain: falling back to the comparison then would mark a corner as worth
+    working on that the session already drove at its best. Only time actually
+    lost counts - a corner gained, or level, is never the costliest. Ties go to
+    the first corner of the lap.
+    """
+    gains = [row.gain_s for row in rows]
+    if any(gain is not None for gain in gains):
+        return _largest(gains, CostBasis.IDEAL)
+    deltas = [row.delta_s for row in rows]
+    if any(delta is not None for delta in deltas):
+        return _largest(deltas, CostBasis.COMPARISON)
+    return None
+
+
+def _largest(
+    values: Sequence[float | None], basis: CostBasis
+) -> CostliestCorner | None:
+    best: CostliestCorner | None = None
+    for position, value in enumerate(values):
+        if value is None or not np.isfinite(value) or value <= 0.0:
+            continue
+        if best is None or value > best.seconds:
+            best = CostliestCorner(position, float(value), basis)
+    return best
 
 
 def name_corners(

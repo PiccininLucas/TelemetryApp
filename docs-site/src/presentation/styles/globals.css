@@ -1,15 +1,15 @@
 @import "tailwindcss";
 
-/* Tokens de cor espelham lmu_telemetry/ui/theme.py (tema escuro do app),
+/* Tokens de cor espelham lmu_telemetry/presentation/theme.py (direção Violeta),
    para a documentação e o app conversarem. */
 @theme {
-  --color-bg: #1a1c20;
-  --color-surface: #22252b;
-  --color-raised: #2b2f36;
-  --color-line: #3a3f47;
-  --color-fg: #e6e8ea;
-  --color-muted: #9aa0a8;
-  --color-accent: #4da3ff;
+  --color-bg: #0c0d14;
+  --color-surface: #141521;
+  --color-raised: #1d1f30;
+  --color-line: #2a2c42;
+  --color-fg: #e9eaf5;
+  --color-muted: #9fa2bd;
+  --color-accent: #8f7cff;
   --color-warn: #f0b132;
   --color-danger: #e5484d;
   --color-ok: #30c48d;

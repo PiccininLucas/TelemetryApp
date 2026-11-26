@@ -27,7 +27,7 @@ rest of the application beyond the `Corner` value object.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 
 import numpy as np
 from scipy.signal import find_peaks, savgol_filter
@@ -483,6 +483,105 @@ def detect_corners(
     ]
 
 
+def corners_at_anchors(
+    speed_ms: np.ndarray,
+    grid_m: np.ndarray,
+    brake: np.ndarray,
+    throttle: np.ndarray,
+    anchors: Sequence[tuple[float, str]],
+    settings: CornerDetectionSettings | None = None,
+    search_radius_m: float = 25.0,
+) -> list[Corner]:
+    """Measure the corners of a circuit whose turns are already known.
+
+    `detect_corners` asks "where was the car slow", so it cannot see a turn the
+    car takes flat out - Fuji has sixteen and the detector finds seven. Given
+    the circuit's official turns as `(distance_m, label)` anchors, this places
+    one corner at each and measures it with the same `measure_corner`, so a
+    flat-out turn simply reports no braking point.
+
+    The apex is the slowest sample within `search_radius_m` of the anchor,
+    narrowed to half the gap to a neighbouring anchor so that two turns of one
+    chicane cannot both claim the same minimum. The speed minimum is searched
+    rather than trusted to the anchor because the anchor is a position measured
+    once, and an apex moves a few metres between laps.
+
+    Args:
+        speed_ms: Speed in m/s, on the distance grid.
+        grid_m: Distance grid, uniformly spaced.
+        brake: Brake position, 0-1.
+        throttle: Throttle position, 0-1.
+        anchors: `(distance_m, label)` per official turn. Order is irrelevant.
+        settings: Thresholds.
+        search_radius_m: How far from an anchor the apex may be.
+
+    Returns:
+        Corners in order of distance, named by their labels. Anchors beyond the
+        end of this lap's grid are dropped.
+    """
+    settings = settings or CornerDetectionSettings()
+    speed_ms = np.asarray(speed_ms, dtype=np.float64)
+    grid_m = np.asarray(grid_m, dtype=np.float64)
+
+    if speed_ms.size < 5 or grid_m.size != speed_ms.size or not anchors:
+        return []
+
+    step_m = float(grid_m[1] - grid_m[0])
+    smoothed = smooth_speed(speed_ms, step_m, settings)
+    ordered = sorted(
+        (anchor for anchor in anchors if 0.0 <= anchor[0] <= grid_m[-1]),
+        key=lambda anchor: anchor[0],
+    )
+    if not ordered:
+        return []
+
+    distances = [distance for distance, _label in ordered]
+    apexes: list[int] = []
+    for position, distance in enumerate(distances):
+        gaps = [
+            abs(distance - distances[other]) / 2.0
+            for other in (position - 1, position + 1)
+            if 0 <= other < len(distances)
+        ]
+        radius = min([search_radius_m, *gaps])
+        low = int(np.searchsorted(grid_m, distance - radius, side="left"))
+        high = int(np.searchsorted(grid_m, distance + radius, side="right"))
+        high = max(high, low + 1)
+        slowest = int(np.argmin(smoothed[low:high]))
+        if 0 < slowest < high - low - 1:
+            apex = low + slowest
+        else:
+            # The minimum sits on the edge of the search, so the speed is still
+            # falling or already rising there: this turn has no local speed
+            # minimum, as with the second half of a hairpin or a sweeper taken
+            # flat. An edge sample would be an arbitrary point of the search
+            # window, so the turn stays where the circuit puts it.
+            apex = int(np.clip(
+                np.searchsorted(grid_m, distance), 0, grid_m.size - 1
+            ))
+        # Windows are cut between consecutive apexes, so two must never share a
+        # sample.
+        if apexes and apex <= apexes[-1]:
+            apex = apexes[-1] + 1
+        apexes.append(min(apex, grid_m.size - 1))
+
+    windows = corner_windows(np.array(apexes, dtype=int), len(grid_m))
+    measured = [
+        measure_corner(
+            index=position, apex_sample=apex, window_start=start,
+            window_end=end, speed_ms=speed_ms, brake=brake, throttle=throttle,
+            grid_m=grid_m, step_m=step_m, settings=settings,
+        )
+        for position, (apex, (start, end)) in enumerate(
+            zip(apexes, windows, strict=True)
+        )
+    ]
+    return [
+        replace(corner, name=label)
+        for corner, (_distance, label) in zip(measured, ordered, strict=True)
+    ]
+
+
 def corner_windows(
     apex_samples: np.ndarray, n_samples: int
 ) -> list[tuple[int, int]]:
@@ -555,8 +654,6 @@ def apply_names_by_distance(
     Returns:
         The corners, with names attached where one matched.
     """
-    from dataclasses import replace
-
     if not corners or not references:
         return corners
 

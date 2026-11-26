@@ -1,9 +1,19 @@
 """Entry point.
 
     .venv\\Scripts\\python.exe main.py
+    .venv\\Scripts\\python.exe main.py --smoke-test [screenshot.png]
 
 The dependencies live in the project's virtual environment, not in the system
 Python, so the interpreter matters. See `check_environment` below.
+
+The same file is the entry point of the packaged `LMU Telemetry.exe`
+(`packaging/lmu_telemetry.spec`). There, files that ship with the program -
+the icon - are found under PyInstaller's unpack folder rather than next to
+this file; `RESOURCE_ROOT` is whichever applies.
+
+`--smoke-test` builds the window, opens the default lap as a user would, then
+quits with 0 - optionally saving a screenshot. It is how a build is checked to
+actually start: imports resolved, Qt plugins found, config bundled.
 """
 
 from __future__ import annotations
@@ -14,6 +24,12 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+#: Where bundled files live: PyInstaller's unpack folder in the .exe, the
+#: project folder otherwise.
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
+ICON_PATH = RESOURCE_ROOT / "assets" / "app.ico"
+SMOKE_TEST_FLAG = "--smoke-test"
 
 
 def check_environment() -> None:
@@ -72,7 +88,7 @@ def check_environment() -> None:
 
 check_environment()
 
-from PySide6 import QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 from lmu_telemetry.composition import build_gateways  # noqa: E402
 from lmu_telemetry.shared.config import load_config  # noqa: E402
@@ -84,16 +100,29 @@ from lmu_telemetry.presentation import theme  # noqa: E402
 from lmu_telemetry.presentation.main_window import MainWindow  # noqa: E402
 
 
+def _smoke_test(argv: list[str]) -> tuple[bool, Path | None]:
+    """Whether `--smoke-test` was given, and the screenshot path after it."""
+    if SMOKE_TEST_FLAG not in argv:
+        return False, None
+    position = argv.index(SMOKE_TEST_FLAG)
+    following = argv[position + 1] if position + 1 < len(argv) else ""
+    return True, (Path(following) if following and not following.startswith("-") else None)
+
+
 def main(argv: list[str] | None = None) -> int:
     # The log file lives with the application's other data, so a session that
     # misbehaves can be reported together with the warnings it produced.
     setup_logging(level=logging.INFO, log_file=paths.data_dir() / "lmu-telemetry.log")
 
-    app = QtWidgets.QApplication(argv if argv is not None else sys.argv)
+    argv = list(argv if argv is not None else sys.argv)
+    smoke_test, screenshot = _smoke_test(argv)
+    app = QtWidgets.QApplication(argv)
     # QSettings keys the saved window layout on both names.
     app.setOrganizationName("LMU Telemetry")
     app.setApplicationName(strings.APP_NAME)
     app.setApplicationDisplayName(strings.APP_NAME)
+    if ICON_PATH.is_file():
+        app.setWindowIcon(QtGui.QIcon(str(ICON_PATH)))
 
     # The user's configuration file is read lazily, deep inside the first lap to
     # be analysed. A mistake in it should be reported here, as what it is, and
@@ -112,6 +141,17 @@ def main(argv: list[str] | None = None) -> int:
 
     window = MainWindow(build_gateways())
     window.show()
+    if smoke_test:
+        # The window opened the default lap while it was built; give the event
+        # loop a moment to paint it, then leave.
+        def finish() -> None:
+            if screenshot is not None:
+                window.grab().save(str(screenshot))
+            logging.getLogger(__name__).info("Smoke test passed")
+            window.close()
+            app.quit()
+
+        QtCore.QTimer.singleShot(1500, finish)
     return app.exec()
 
 

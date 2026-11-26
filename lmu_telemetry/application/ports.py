@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
-from lmu_telemetry.domain.models import Lap
+from lmu_telemetry.domain.models import Lap, SessionInfo
 from lmu_telemetry.domain.records import CornerReference, LapRow, SessionRow
 
 if TYPE_CHECKING:
@@ -57,8 +57,12 @@ class SessionData(Protocol):
 
 
 class OpenedSession(SessionData, Protocol):
-    """A session the interface holds open: it also owns its handle and carries
-    the notes the loader raised."""
+    """A session the interface holds open: it also owns its handle, carries
+    the notes the loader raised, and knows what it is - track, car, class and
+    weather - for the summary the window shows."""
+
+    @property
+    def info(self) -> SessionInfo: ...
 
     @property
     def warnings(self) -> list[str]: ...
@@ -79,6 +83,18 @@ class CatalogGateway(Protocol):
         Raises:
             Exception: The catalog cannot be read; the caller decides how to
                 degrade.
+        """
+        ...
+
+    def forget_missing_sessions(self) -> list[Path]:
+        """Drop the sessions whose file was deleted, and return their paths.
+
+        A session whose whole folder is missing is kept: that is more likely a
+        drive that is not mounted than a deleted file.
+
+        Raises:
+            Exception: The catalog cannot be written; the caller decides how
+                to degrade.
         """
         ...
 

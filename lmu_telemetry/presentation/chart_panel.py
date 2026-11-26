@@ -1,8 +1,8 @@
 """Stacked traces sharing one X axis, with a delta-t row.
 
-Phase 5 drew one channel. This is the instrument a lap is actually read on:
-speed, pedals, steering, gear and engine speed stacked vertically, all sharing
-one X axis, plus the delta-t against a reference lap at the bottom.
+This is the instrument a lap is actually read on: speed, pedals, steering, gear
+and engine speed stacked vertically, all sharing one X axis, plus the delta-t
+against a reference lap at the bottom.
 
 Three decisions carry the design.
 
@@ -21,7 +21,13 @@ disables it while a comparison is drawn.
 **Delta-t is a slope, not a value.** `delta(s) = t_lap(s) - t_reference(s)`
 only grows where time is being lost *right now*; a flat delta at a high value is
 a loss that already happened and is simply being carried. The row is filled to
-zero so the eye follows the slope rather than the level.
+zero so the eye follows the slope rather than the level - and it is the only
+filled row, the one emphasis on the screen.
+
+Above the rows: the key (each lap's line, drawn as it is drawn below - the
+comparison is dashed everywhere, so colour is never the only cue), the channel
+chips that switch rows on and off, and a readout of every visible channel under
+the cursor, in cells that hold still while the numbers change.
 
 This module takes numpy arrays. It knows nothing about sessions, files or the
 analysis pipeline, which is what lets it be tested with three-point arrays.
@@ -36,10 +42,11 @@ from enum import Enum
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
+from lmu_telemetry.presentation import plotting, theme
+from lmu_telemetry.presentation.chart_widgets import LineKey, LineStyle, ReadoutCell
 from lmu_telemetry.shared import strings
-from lmu_telemetry.presentation import theme
 from lmu_telemetry.shared.formatting import format_value
 
 
@@ -56,9 +63,9 @@ class AxisMode(str, Enum):
 class Role(str, Enum):
     """Which of the two laps a curve belongs to."""
 
-    #: The lap the user selected. Drawn in the primary colour, thicker.
+    #: The lap the user selected. Solid, slightly thicker.
     PRIMARY = "primary"
-    #: The lap it is being compared against.
+    #: The lap it is being compared against. Dashed, in every row.
     BENCHMARK = "benchmark"
 
 
@@ -73,21 +80,24 @@ class Series:
     Attributes:
         channel: Key into a lap's channel mapping. Values are in the
             application's canonical SI units.
-        label: Short name for the cursor readout.
+        label: Caption for the cursor readout, with the unit.
         scale: Multiplier from canonical units to display units. Speed is held
             in m/s and shown in km/h; pedals are held as a 0-1 fraction and
             shown as a percentage. The conversion lives here, at the edge, so
             nothing upstream ever has to remember which unit it is holding.
         decimals: Digits after the point in the readout.
-        colour: Fixed colour, when the row uses colour to tell *channels* apart
-            rather than laps. None means the curve takes its lap's colour.
+        series: A key of `theme.SERIES_COLOURS` when the row uses colour to tell
+            *channels* apart (throttle green, brake red) rather than laps. None
+            means the curve takes its lap's colour.
+        widest: The widest figure the readout can show, which sizes its cell.
     """
 
     channel: str
     label: str
     scale: float = 1.0
     decimals: int = 0
-    colour: str | None = None
+    series: str | None = None
+    widest: str = "-000.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +105,9 @@ class RowSpec:
     """One stacked plot.
 
     Attributes:
-        key: Stable identifier, used by the menu that toggles rows.
-        axis_label: Left-axis label, carrying the unit.
+        key: Stable identifier, used by the commands that toggle rows.
+        axis_label: Left-axis title, carrying the unit.
+        chip: Short name on the channel chip.
         series: Curves drawn in this row.
         y_range: Fixed Y range, or None to autoscale. Fixed where the channel
             has a physical range - a pedal trace autoscaled to 0-40% looks like
@@ -108,6 +119,7 @@ class RowSpec:
 
     key: str
     axis_label: str
+    chip: str
     series: tuple[Series, ...] = ()
     y_range: tuple[float, float] | None = None
     zero_line: bool = False
@@ -126,17 +138,17 @@ ROW_DELTA = "delta"
 #: everything above it.
 ROW_SPECS: tuple[RowSpec, ...] = (
     RowSpec(
-        ROW_SPEED, strings.CHART_ROW_SPEED,
-        (Series("Ground Speed", strings.CHART_SERIES_SPEED, 3.6, 1),),
+        ROW_SPEED, strings.CHART_ROW_SPEED, strings.CHART_CHIP_SPEED,
+        (Series("Ground Speed", strings.CHART_SERIES_SPEED, 3.6, 1, widest="000.0"),),
         stretch=3,
     ),
     RowSpec(
-        ROW_PEDALS, strings.CHART_ROW_PEDALS,
+        ROW_PEDALS, strings.CHART_ROW_PEDALS, strings.CHART_CHIP_PEDALS,
         (
             Series("Throttle Pos", strings.CHART_SERIES_THROTTLE, 100.0, 0,
-                   theme.COLOUR_THROTTLE),
+                   "throttle", widest="000"),
             Series("Brake Pos", strings.CHART_SERIES_BRAKE, 100.0, 0,
-                   theme.COLOUR_BRAKE),
+                   "brake", widest="000"),
         ),
         # Pedals are bounded at 0 and 100% by construction. Autoscaling would
         # turn a lap that never used more than 40% brake into one that looks
@@ -145,28 +157,33 @@ ROW_SPECS: tuple[RowSpec, ...] = (
         stretch=2,
     ),
     RowSpec(
-        ROW_STEERING, strings.CHART_ROW_STEERING,
+        ROW_STEERING, strings.CHART_ROW_STEERING, strings.CHART_CHIP_STEERING,
         (Series("Steering Pos", strings.CHART_SERIES_STEERING, 100.0, 1),),
         zero_line=True, stretch=2,
     ),
     RowSpec(
-        ROW_GEAR, strings.CHART_ROW_GEAR,
-        (Series("Gear", strings.CHART_SERIES_GEAR, 1.0, 0),),
+        ROW_GEAR, strings.CHART_ROW_GEAR, strings.CHART_CHIP_GEAR,
+        (Series("Gear", strings.CHART_SERIES_GEAR, 1.0, 0, widest="0"),),
         stretch=1,
     ),
     RowSpec(
-        ROW_RPM, strings.CHART_ROW_RPM,
-        (Series("Engine RPM", strings.CHART_SERIES_RPM, 1.0, 0),),
+        ROW_RPM, strings.CHART_ROW_RPM, strings.CHART_CHIP_RPM,
+        (Series("Engine RPM", strings.CHART_SERIES_RPM, 1.0, 0, widest="00000"),),
         stretch=2,
     ),
     # No series: the delta is computed from two laps, not read from a channel.
-    RowSpec(ROW_DELTA, strings.CHART_ROW_DELTA, (), zero_line=True, stretch=2),
+    RowSpec(ROW_DELTA, strings.CHART_ROW_DELTA, strings.CHART_CHIP_DELTA, (),
+            zero_line=True, stretch=2),
 )
 
 #: Shown on opening. Speed and pedals answer most questions on their own, and a
 #: stack of six rows on a laptop screen gives every one of them too little
-#: height to read. The rest are one menu item away.
+#: height to read. The rest are one chip away.
 DEFAULT_ROWS: tuple[str, ...] = (ROW_SPEED, ROW_PEDALS, ROW_DELTA)
+
+#: Readout cell keys that are not channels.
+CELL_POSITION = "position"
+CELL_DELTA = "delta"
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,16 +191,20 @@ class LapTrace:
     """One lap, ready to draw.
 
     Attributes:
-        label: What the legend calls it.
+        label: The full name - lap, time, gap - for the key's tooltip and for
+            exports.
         grid_m: Distance grid, from the start of the lap.
         elapsed_s: Elapsed time on the same grid.
         channels: Channel name -> values on `grid_m`, in canonical units.
+        key: The short name beside its line in the key ("Volta 5"); the
+            times are in the session header already. Empty means `label`.
     """
 
     label: str
     grid_m: np.ndarray
     elapsed_s: np.ndarray
     channels: Mapping[str, np.ndarray]
+    key: str = ""
 
     def x_for(self, mode: AxisMode) -> np.ndarray:
         return self.grid_m if mode is AxisMode.DISTANCE else self.elapsed_s
@@ -199,6 +220,26 @@ class LapTrace:
         return float(values[index])
 
 
+def line_style(series: Series | None, role: Role) -> LineStyle:
+    """How a curve is drawn.
+
+    Colour tells the laps apart, and so does the line: the comparison is
+    dashed in every row, so a reader who cannot tell blue from orange can
+    still tell the laps apart. On the pedal row colour already tells
+    *channels* apart - throttle green, brake red, a reading that is instant and
+    universal - so there the dash is the only thing that tells the laps apart.
+    """
+    dashed = role is Role.BENCHMARK
+    if series is not None and series.series is not None:
+        return LineStyle(theme.SERIES_COLOURS[series.series], 1.4, dashed)
+    colour = theme.TRACE_REFERENCE if role is Role.PRIMARY else theme.TRACE_COMPARISON
+    return LineStyle(colour, 1.6 if role is Role.PRIMARY else 1.3, dashed)
+
+
+def _pen(series: Series, role: Role) -> QtGui.QPen:
+    return line_style(series, role).pen()
+
+
 # --------------------------------------------------------------------------- #
 # One row
 # --------------------------------------------------------------------------- #
@@ -208,11 +249,7 @@ class _Row:
 
     def __init__(self, spec: RowSpec) -> None:
         self.spec = spec
-        self.plot = pg.PlotWidget()
-        self.plot.setBackground(theme.BACKGROUND)
-        self.plot.showGrid(x=True, y=True, alpha=theme.GRID_ALPHA)
-        self.plot.setLabel("left", spec.axis_label)
-        self.plot.setMenuEnabled(False)
+        self.plot = plotting.make_plot(left=spec.axis_label)
         # Y stays put and X is what the user explores. Letting Y pan too makes
         # a trace easy to lose off-screen, and there is no reason to want it:
         # every row's Y range is meaningful in itself.
@@ -223,22 +260,13 @@ class _Row:
         self.plot.setClipToView(True)
         self.plot.getAxis("left").setWidth(theme.AXIS_WIDTH)
 
-        # Every quantity here is read at its natural magnitude: 7000 rpm, 268
-        # km/h, a delta of -0.51 s. pyqtgraph's automatic SI prefix would
-        # relabel those "7 (x1000)" and "-510 (x0.001)", which is exactly the
-        # extra arithmetic a driver comparing two laps does not need.
-        for side in ("left", "bottom"):
-            self.plot.getAxis(side).enableAutoSIPrefix(False)
-
         if spec.y_range is not None:
             self.plot.setYRange(*spec.y_range, padding=0.0)
 
         if spec.zero_line:
             self.plot.addItem(
-                pg.InfiniteLine(
-                    pos=0.0, angle=0, movable=False,
-                    pen=pg.mkPen(theme.BORDER, width=1),
-                ),
+                pg.InfiniteLine(pos=0.0, angle=0, movable=False,
+                                pen=pg.mkPen(theme.BORDER, width=1)),
                 ignoreBounds=True,
             )
 
@@ -257,19 +285,21 @@ class _Row:
         self.delta_curve: pg.PlotDataItem | None = None
         if spec.key == ROW_DELTA:
             self.delta_loss = self.plot.plot(
-                pen=None, fillLevel=0.0, brush=pg.mkBrush(*theme.FILL_LOSS)
-            )
+                pen=None, fillLevel=0.0, brush=pg.mkBrush(*theme.FILL_LOSS))
             self.delta_gain = self.plot.plot(
-                pen=None, fillLevel=0.0, brush=pg.mkBrush(*theme.FILL_GAIN)
-            )
-            self.delta_curve = self.plot.plot(
-                pen=pg.mkPen(theme.TEXT, width=1.4)
-            )
+                pen=None, fillLevel=0.0, brush=pg.mkBrush(*theme.FILL_GAIN))
+            self.delta_curve = self.plot.plot(pen=pg.mkPen(theme.TEXT, width=1.4))
+
+        # Everything above stays still while the cursor moves: cached, so a
+        # mouse move repaints a strip of pixels rather than every curve.
+        plotting.freeze(*self.curves.values())
+        plotting.freeze(*(item for item in (self.delta_loss, self.delta_gain,
+                                            self.delta_curve) if item is not None))
+        plotting.freeze_axes(self.plot)
 
         self.cursor = pg.InfiniteLine(
             angle=90, movable=False,
-            pen=pg.mkPen(theme.TEXT_MUTED, width=1,
-                         style=QtCore.Qt.PenStyle.DashLine),
+            pen=pg.mkPen(theme.TEXT_MUTED, width=1, style=QtCore.Qt.PenStyle.DashLine),
         )
         self.cursor.setVisible(False)
         self.plot.addItem(self.cursor, ignoreBounds=True)
@@ -288,24 +318,6 @@ class _Row:
         for item in (self.delta_loss, self.delta_gain, self.delta_curve):
             if item is not None:
                 item.setData([], [])
-
-
-def _pen(series: Series, role: Role) -> pg.mkPen:
-    """The pen for one curve.
-
-    Colour tells laps apart, except in a row that already spends colour telling
-    *channels* apart. Throttle and brake must stay green and red - that reading
-    is instant and universal - so on that row the second lap is dashed instead.
-    Using colour for both at once would leave four curves no one can attribute.
-    """
-    if series.colour is not None:
-        style = (QtCore.Qt.PenStyle.SolidLine if role is Role.PRIMARY
-                 else QtCore.Qt.PenStyle.DashLine)
-        return pg.mkPen(series.colour, width=1.4, style=style)
-
-    colour = (theme.TRACE_REFERENCE if role is Role.PRIMARY
-              else theme.TRACE_COMPARISON)
-    return pg.mkPen(colour, width=1.6 if role is Role.PRIMARY else 1.3)
 
 
 # --------------------------------------------------------------------------- #
@@ -333,6 +345,7 @@ class ChartStack(QtWidgets.QWidget):
         self._rows: dict[str, _Row] = {}
         self._corner_markers: list[tuple[float, str]] = []
         self._seam_markers: list[float] = []
+        self.channel_chips: dict[str, QtWidgets.QToolButton] = {}
         self._build()
 
     # -- construction ------------------------------------------------------
@@ -342,18 +355,63 @@ class ChartStack(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        header = QtWidgets.QHBoxLayout()
-        header.setContentsMargins(8, 4, 8, 0)
-        self.legend = QtWidgets.QLabel()
-        self.legend.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        self.readout = QtWidgets.QLabel()
-        self.readout.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        self.readout.setAlignment(
-            QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
-        )
-        header.addWidget(self.legend, stretch=1)
-        header.addWidget(self.readout, stretch=1)
-        layout.addLayout(header)
+        # The key, the chips and the readout sit in a strip that scrolls
+        # sideways when the window is narrow, as the session header does:
+        # nine readout cells and six chips must not set the window's minimum
+        # width.
+        self._chrome = QtWidgets.QWidget()
+        self._chrome.setObjectName("chart_chrome_content")
+        chrome_layout = QtWidgets.QVBoxLayout(self._chrome)
+        chrome_layout.setContentsMargins(0, 0, 0, 0)
+        chrome_layout.setSpacing(0)
+        self.chrome = QtWidgets.QScrollArea()
+        self.chrome.setObjectName("chart_chrome")
+        self.chrome.setWidget(self._chrome)
+        self.chrome.setWidgetResizable(True)
+        self.chrome.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.chrome.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.chrome.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.chrome.setMinimumWidth(120)
+        self.chrome.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                                  QtWidgets.QSizePolicy.Policy.Fixed)
+        layout.addWidget(self.chrome)
+
+        # The key and the channel chips.
+        top = QtWidgets.QHBoxLayout()
+        top.setContentsMargins(10, 6, 8, 0)
+        top.setSpacing(16)
+        self.primary_key = LineKey(line_style(None, Role.PRIMARY))
+        self.benchmark_key = LineKey(line_style(None, Role.BENCHMARK))
+        top.addWidget(self.primary_key)
+        top.addWidget(self.benchmark_key)
+        top.addStretch(1)
+        self.chip_bar = QtWidgets.QHBoxLayout()
+        self.chip_bar.setSpacing(4)
+        chips = QtWidgets.QWidget()
+        chips.setLayout(self.chip_bar)
+        chips.setAccessibleName(strings.CHART_CHANNELS_NAME)
+        self.chip_bar.setContentsMargins(0, 0, 0, 0)
+        top.addWidget(chips)
+        chrome_layout.addLayout(top)
+
+        # The readout: one cell per quantity, all present from the start so
+        # the row never changes height or order as the cursor comes and goes.
+        self.readout = QtWidgets.QWidget()
+        self.readout.setAccessibleName(strings.CHART_READOUT_NAME)
+        readout_layout = QtWidgets.QHBoxLayout(self.readout)
+        readout_layout.setContentsMargins(10, 2, 8, 4)
+        readout_layout.setSpacing(18)
+        self.readout_cells: dict[str, ReadoutCell] = {
+            CELL_POSITION: ReadoutCell(strings.CHART_READOUT_POSITION, widest="00000"),
+        }
+        for spec in ROW_SPECS:
+            for series in spec.series:
+                self.readout_cells[series.channel] = ReadoutCell(series.label, series.widest)
+        self.readout_cells[CELL_DELTA] = ReadoutCell(strings.CHART_SERIES_DELTA, "+00.000")
+        for cell in self.readout_cells.values():
+            readout_layout.addWidget(cell)
+        readout_layout.addStretch(1)
+        chrome_layout.addWidget(self.readout)
 
         self.plots = QtWidgets.QWidget()
         self._plot_layout = QtWidgets.QVBoxLayout(self.plots)
@@ -386,6 +444,39 @@ class ChartStack(QtWidgets.QWidget):
         self._relayout()
         self.clear()
 
+    def set_channel_actions(self, actions: Mapping[str, QtGui.QAction]) -> None:
+        """Show the row toggles as chips above the traces.
+
+        The chips are the window's own actions - the same ones the View menu
+        lists - so a chip and its menu entry are one switch, checked and
+        enabled together, and a row the lap has no data for is greyed in both.
+        """
+        for key, action in actions.items():
+            spec = next((s for s in ROW_SPECS if s.key == key), None)
+            if spec is None or key in self.channel_chips:
+                continue
+            chip = QtWidgets.QToolButton()
+            chip.setDefaultAction(action)
+            chip.setProperty("role", "chip")
+            chip.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+            action.setIconText(spec.chip)
+            chip.setToolTip(spec.axis_label)
+            chip.setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
+            self.chip_bar.addWidget(chip)
+            self.channel_chips[key] = chip
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        # Widths come from the polished font, which only exists once shown.
+        for cell in self.readout_cells.values():
+            cell.ensure_width()
+        self._fit_chrome()
+
+    def _fit_chrome(self) -> None:
+        """As tall as the key, chips and readout, plus a scroll bar's room."""
+        bar = self.chrome.horizontalScrollBar().sizeHint().height()
+        self.chrome.setFixedHeight(self._chrome.sizeHint().height() + bar)
+
     # -- data --------------------------------------------------------------
 
     def show_laps(
@@ -409,15 +500,16 @@ class ChartStack(QtWidgets.QWidget):
         self._delta_grid_m = (
             None if delta_grid_m is None else np.asarray(delta_grid_m, dtype=np.float64)
         )
-        self._delta_s = (
-            None if delta_s is None else np.asarray(delta_s, dtype=np.float64)
-        )
+        self._delta_s = None if delta_s is None else np.asarray(delta_s, dtype=np.float64)
 
         self.placeholder.hide()
         self.plots.show()
+        self.readout.show()
+        self.chrome.show()
         self._redraw()
         self._relayout()
         self._update_legend()
+        self._hide_cursor()
 
     def clear(self) -> None:
         self._primary = None
@@ -430,8 +522,9 @@ class ChartStack(QtWidgets.QWidget):
             row.clear_curves()
             row.clear_markers()
             row.cursor.setVisible(False)
-        self.legend.clear()
-        self.readout.clear()
+        self.primary_key.hide()
+        self.benchmark_key.hide()
+        self.readout.hide()
         self.plots.hide()
         self.placeholder.show()
 
@@ -495,7 +588,13 @@ class ChartStack(QtWidgets.QWidget):
                 self._set_curve(row, series, Role.PRIMARY, self._primary)
                 self._set_curve(row, series, Role.BENCHMARK, self._benchmark)
             if spec.y_range is None:
-                row.plot.enableAutoRange(axis="y")
+                _fit_y(row, [
+                    np.asarray(values) * series.scale
+                    for series in spec.series
+                    for trace in (self._primary, self._benchmark)
+                    if trace is not None
+                    and (values := trace.channels.get(series.channel)) is not None
+                ])
 
         if self._anchor is not None and self._primary is not None:
             x = self._primary.x_for(self._axis_mode)
@@ -532,14 +631,14 @@ class ChartStack(QtWidgets.QWidget):
         row.delta_loss.setData(grid, np.where(delta > 0.0, delta, 0.0))
         row.delta_gain.setData(grid, np.where(delta < 0.0, delta, 0.0))
         row.delta_curve.setData(grid, delta)
-        row.plot.enableAutoRange(axis="y")
+        # Zero is always in view: the delta is read against it.
+        _fit_y(row, [delta, np.zeros(1)])
 
     def _relayout(self) -> None:
         """Show the enabled rows, and put the X axis under the last of them."""
         visible = self.visible_rows()
         for spec in ROW_SPECS:
-            row = self._rows[spec.key]
-            row.plot.setVisible(spec.key in visible)
+            self._rows[spec.key].plot.setVisible(spec.key in visible)
 
         label = (strings.CHART_AXIS_DISTANCE if self._axis_mode is AxisMode.DISTANCE
                  else strings.CHART_AXIS_TIME)
@@ -550,11 +649,26 @@ class ChartStack(QtWidgets.QWidget):
             # numbers under every plot costs the height the traces need and
             # tells the reader nothing new - the axes are linked.
             row.plot.getAxis("bottom").setStyle(showValues=is_last)
-            row.plot.setLabel("bottom", label if is_last else "")
+            plotting.set_label(row.plot, "bottom", label if is_last else "")
 
+        self._sync_readout_cells(visible)
         # Which row carries the marker labels depends on which rows are shown,
         # and the markers themselves only exist on the distance axis.
         self._rebuild_markers()
+
+    def _sync_readout_cells(self, visible: list[str]) -> None:
+        shown = {CELL_POSITION}
+        for spec in ROW_SPECS:
+            if spec.key in visible:
+                shown.update(series.channel for series in spec.series)
+        if ROW_DELTA in visible:
+            shown.add(CELL_DELTA)
+        for key, cell in self.readout_cells.items():
+            cell.setVisible(key in shown)
+        self.readout_cells[CELL_POSITION].caption.setText(
+            strings.CHART_READOUT_POSITION if self._axis_mode is AxisMode.DISTANCE
+            else strings.CHART_READOUT_ELAPSED
+        )
 
     # -- markers -----------------------------------------------------------
 
@@ -578,7 +692,9 @@ class ChartStack(QtWidgets.QWidget):
         self._rebuild_markers()
 
     def _rebuild_markers(self) -> None:
-        top = self.visible_rows()[0] if self.visible_rows() else None
+        visible = self.visible_rows()
+        top = visible[0] if visible else None
+        label_font = theme.font(theme.TYPE.micro)
 
         for key, row in self._rows.items():
             row.clear_markers()
@@ -588,20 +704,20 @@ class ChartStack(QtWidgets.QWidget):
             for distance, label in self._corner_markers:
                 line = pg.InfiniteLine(
                     pos=float(distance), angle=90, movable=False,
-                    pen=pg.mkPen(theme.BORDER, width=1,
-                                 style=QtCore.Qt.PenStyle.DotLine),
+                    pen=pg.mkPen(theme.BORDER, width=1, style=QtCore.Qt.PenStyle.DotLine),
                     label=label if key == top else None,
                     labelOpts={"position": 0.04, "color": theme.TEXT_DISABLED,
                                "movable": False},
                 )
+                if getattr(line, "label", None) is not None:
+                    line.label.setFont(label_font)
                 row.plot.addItem(line, ignoreBounds=True)
                 row.markers.append(line)
 
             for distance in self._seam_markers:
                 line = pg.InfiniteLine(
                     pos=float(distance), angle=90, movable=False,
-                    pen=pg.mkPen(theme.WARNING, width=1,
-                                 style=QtCore.Qt.PenStyle.DashLine),
+                    pen=pg.mkPen(theme.WARNING, width=1, style=QtCore.Qt.PenStyle.DashLine),
                 )
                 row.plot.addItem(line, ignoreBounds=True)
                 row.markers.append(line)
@@ -616,8 +732,7 @@ class ChartStack(QtWidgets.QWidget):
             return
         margin = (end_m - start_m) * margin_fraction
         if self._axis_mode is AxisMode.DISTANCE:
-            self._anchor.plot.setXRange(start_m - margin, end_m + margin,
-                                        padding=0.0)
+            self._anchor.plot.setXRange(start_m - margin, end_m + margin, padding=0.0)
             return
         elapsed = self._primary.elapsed_s
         grid = self._primary.grid_m
@@ -625,19 +740,30 @@ class ChartStack(QtWidgets.QWidget):
         high = float(np.interp(end_m + margin, grid, elapsed))
         self._anchor.plot.setXRange(low, high, padding=0.0)
 
-    # -- legend and cursor -------------------------------------------------
+    # -- key and cursor ----------------------------------------------------
 
     def _update_legend(self) -> None:
         if self._primary is None:
-            self.legend.clear()
+            self.primary_key.hide()
+            self.benchmark_key.hide()
             return
-        parts = [_coloured(self._primary.label, theme.TRACE_REFERENCE)]
-        parts.append(
-            _coloured(self._benchmark.label, theme.TRACE_COMPARISON)
-            if self._benchmark is not None
-            else _coloured(strings.CHART_LEGEND_NO_BENCHMARK, theme.TEXT_DISABLED)
-        )
-        self.legend.setText(strings.CHART_READOUT_SEPARATOR.join(parts))
+        self.primary_key.set(line_style(None, Role.PRIMARY),
+                             self._primary.key or self._primary.label)
+        self.primary_key.setToolTip(self._primary.label)
+        self.primary_key.show()
+        if self._benchmark is not None:
+            self.benchmark_key.set(line_style(None, Role.BENCHMARK),
+                                   self._benchmark.key or self._benchmark.label)
+            self.benchmark_key.setToolTip(self._benchmark.label)
+            self.benchmark_key.label.setProperty("role", "")
+        else:
+            self.benchmark_key.set(LineStyle(theme.TEXT_DISABLED, 1.3, True),
+                                   strings.CHART_LEGEND_NO_BENCHMARK)
+            self.benchmark_key.setToolTip("")
+            self.benchmark_key.label.setProperty("role", "placeholder")
+        self.benchmark_key.label.style().unpolish(self.benchmark_key.label)
+        self.benchmark_key.label.style().polish(self.benchmark_key.label)
+        self.benchmark_key.show()
 
     def _on_mouse_moved(self, row: _Row, position) -> None:
         if self._primary is None or not row.plot.isVisible():
@@ -672,72 +798,97 @@ class ChartStack(QtWidgets.QWidget):
         for row in self._rows.values():
             row.cursor.setPos(x)
             row.cursor.setVisible(row.plot.isVisible())
-        self.readout.setText(self._readout_text(x))
+        self._show_readout(x)
 
     def _hide_cursor(self) -> None:
         for row in self._rows.values():
             row.cursor.setVisible(False)
-        self.readout.clear()
+        for cell in self.readout_cells.values():
+            cell.show_values(None)
 
-    def _readout_text(self, x: float) -> str:
-        """Every visible channel's value at the cursor, both laps side by side."""
+    def readout_at(self, x: float) -> dict[str, tuple[str, str | None]]:
+        """Every readout figure at an X position: cell key -> (this lap, the
+        comparison or None). Only the cells of visible rows."""
+        values: dict[str, tuple[str, str | None]] = {}
         if self._primary is None:
-            return ""
-
-        parts = [
-            strings.CHART_READOUT_DISTANCE.format(distance=x)
-            if self._axis_mode is AxisMode.DISTANCE
-            else strings.CHART_READOUT_TIME.format(time=x)
-        ]
-
-        for key in self.visible_rows():
-            spec = next(s for s in ROW_SPECS if s.key == key)
-            if key == ROW_DELTA:
-                parts.append(self._delta_readout(x))
-                continue
-            for series in spec.series:
-                parts.append(self._series_readout(series, x))
-
-        return strings.CHART_READOUT_SEPARATOR.join(p for p in parts if p)
-
-    def _series_readout(self, series: Series, x: float) -> str:
-        primary = self._primary.sample(series.channel, x, self._axis_mode)
-        if primary is None:
-            return ""
-        text = _coloured(
-            format_value(primary * series.scale, series.decimals),
-            series.colour or theme.TRACE_REFERENCE,
+            return values
+        values[CELL_POSITION] = (
+            f"{x:.0f}" if self._axis_mode is AxisMode.DISTANCE else f"{x:.2f}", None
         )
-        if self._benchmark is not None:
-            other = self._benchmark.sample(series.channel, x, self._axis_mode)
-            if other is not None:
-                # A readout has no line style to spend, so where the plot tells
-                # the two laps apart by dashing it italicises here instead.
-                # Without this, "acel 0/0" is two green numbers with nothing
-                # saying which lap either belongs to.
-                text += "/" + _coloured(
-                    format_value(other * series.scale, series.decimals),
-                    series.colour or theme.TRACE_COMPARISON,
-                    italic=series.colour is not None,
+        for key in self.visible_rows():
+            if key == ROW_DELTA:
+                delta = self._delta_at(x)
+                if delta is not None:
+                    values[CELL_DELTA] = (f"{delta:+.3f}", None)
+                continue
+            spec = next(s for s in ROW_SPECS if s.key == key)
+            for series in spec.series:
+                primary = self._primary.sample(series.channel, x, self._axis_mode)
+                if primary is None:
+                    continue
+                other = (None if self._benchmark is None
+                         else self._benchmark.sample(series.channel, x, self._axis_mode))
+                values[series.channel] = (
+                    format_value(primary * series.scale, series.decimals),
+                    None if other is None
+                    else format_value(other * series.scale, series.decimals),
                 )
-        return f"{series.label} {text}"
+        return values
 
-    def _delta_readout(self, x: float) -> str:
-        if self._delta_s is None or self._delta_grid_m is None:
-            return ""
-        if not len(self._delta_s):
-            return ""
+    def _show_readout(self, x: float) -> None:
+        values = self.readout_at(x)
+        series_of = {s.channel: s for spec in ROW_SPECS for s in spec.series}
+        for key, cell in self.readout_cells.items():
+            if not cell.isVisibleTo(self.readout):
+                continue
+            primary, other = values.get(key, (None, None))
+            if key == CELL_DELTA:
+                delta = self._delta_at(x)
+                cell.show_values(primary, tone=theme.verdict(delta, higher_is_better=False))
+                continue
+            series = series_of.get(key)
+            colour_key = None if series is None else series.series
+            cell.show_values(
+                primary, other,
+                primary_series=None if series is None else (colour_key or "primary"),
+                comparison_series=colour_key or "comparison",
+                # The readout has no line to dash: the comparison's figure is
+                # set in italic, the same cue in type.
+                comparison_italic=True,
+            )
+
+    def _delta_at(self, x: float) -> float | None:
+        if self._delta_s is None or self._delta_grid_m is None or not len(self._delta_s):
+            return None
         index = _nearest_index(self._delta_grid_m, x)
-        if index is None:
-            return ""
-        value = float(self._delta_s[index])
-        colour = theme.COLOUR_BRAKE if value > 0 else theme.COLOUR_THROTTLE
-        return f"{strings.CHART_SERIES_DELTA} {_coloured(f'{value:+.3f}', colour)}"
+        return None if index is None else float(self._delta_s[index])
 
 
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+
+def _fit_y(row: _Row, arrays: list[np.ndarray]) -> None:
+    """Set a row's Y range to its data, once, instead of leaving it on
+    pyqtgraph's auto-range.
+
+    The result is the same - auto-range also spans all the data, and Y never
+    pans - but auto-range is recomputed on every paint and re-applies the
+    range, which throws away the cached curves: a mouse move then repainted
+    every curve of every autoscaled row (~90 ms on a Le Mans lap, against
+    ~2 ms with the range set here). See `plotting.freeze`.
+    """
+    finite = [a[np.isfinite(a)] for a in arrays if a is not None and len(a)]
+    finite = [a for a in finite if a.size]
+    if not finite:
+        return
+    low = float(min(a.min() for a in finite))
+    high = float(max(a.max() for a in finite))
+    if high - low < 1e-9:
+        low, high = low - 1.0, high + 1.0
+    row.plot.disableAutoRange(axis="y")
+    row.plot.setYRange(low, high, padding=0.05)
+
 
 def _nearest_index(x_values: np.ndarray, x: float) -> int | None:
     """Index of the sample closest to `x`, or None when there are none.
@@ -755,8 +906,3 @@ def _nearest_index(x_values: np.ndarray, x: float) -> int | None:
         return len(x_values) - 1
     before = after - 1
     return before if abs(x_values[before] - x) <= abs(x_values[after] - x) else after
-
-
-def _coloured(text: str, colour: str, *, italic: bool = False) -> str:
-    style = f"color:{colour}" + (";font-style:italic" if italic else "")
-    return f'<span style="{style}">{text}</span>'

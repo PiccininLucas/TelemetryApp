@@ -158,29 +158,66 @@ STATUS_IMPORTED = "{n} sessão(ões) importada(s)."
 STATUS_IMPORT_PROGRESS = "Importando {done}/{total}: {name}"
 STATUS_IMPORT_BUSY = "Uma importação já está em andamento."
 STATUS_LAP_LOADED = (
-    "Volta {number} · {time} · {length:.0f} m · {n_corners} curvas · "
-    "carregada em {elapsed:.0f} ms"
+    "Volta {number} · {time} · {length:.0f} m · {n_corners} curvas"
 )
 STATUS_LAP_COMPARED = (
     "Volta {number} · {time} · {gap} s vs {reference} · "
-    "pior perda {loss} s em {loss_at:.0f} m · carregada em {elapsed:.0f} ms"
+    "pior perda {loss} s em {loss_at:.0f} m"
 )
+STATUS_TIMING = "analisada em {elapsed:.0f} ms"
+STATUS_TIMING_TOOLTIP = "Tempo para abrir, analisar e desenhar a volta"
+NOTICE_WARNING = "Atenção"
+NOTICE_ERROR = "Erro"
+NOTICE_DISMISS = "Dispensar aviso"
 STATUS_REFERENCE_LAP = "volta {number}"
 STATUS_REFERENCE_IDEAL = "volta ideal"
+STATUS_OPEN_FAILED = "Não foi possível abrir a sessão. Veja o aviso acima dos gráficos."
+STATUS_SESSIONS_FORGOTTEN = (
+    "{n} sessão(ões) removida(s) da lista: arquivo não encontrado."
+)
+NOTICE_SESSION_FORGOTTEN = (
+    "O arquivo desta sessão não existe mais e ela foi removida da lista: {path}"
+)
 STATUS_NO_SELECTION = "Selecione uma volta na árvore à esquerda."
 STATUS_REFERENCE_PINNED = "Volta {number} fixada como referência."
 STATUS_NO_REFERENCE_PINNED = "Nenhuma volta fixada. Use Exibir ▸ Comparação ▸ Fixar."
 
 # --- Session browser --------------------------------------------------------
 BROWSER_TITLE = "Sessões"
-BROWSER_COLUMN_NAME = "Pista · carro · sessão · volta"
-BROWSER_COLUMN_TIME = "Tempo"
-BROWSER_COLUMN_NOTE = "Situação"
+BROWSER_COLUMN_SESSION = "Sessão"
+BROWSER_COLUMN_BEST = "Melhor"
+BROWSER_COLUMN_LAPS = "Voltas"
 BROWSER_EMPTY = "Catálogo vazio — use Arquivo ▸ Importar sessão."
 BROWSER_SESSION_LABEL = "{date} · {type}"
-BROWSER_LAP_LABEL = "Volta {number}"
-BROWSER_N_SESSIONS = "{n} sessões"
-BROWSER_N_LAPS = "{n} voltas"
+BROWSER_GROUP_LABEL = "{track} · {car}"
+BROWSER_GROUP_COUNT = "{n} sessões"
+BROWSER_MARK_REFERENCE = "ref"
+BROWSER_SEARCH_PLACEHOLDER = "Buscar pista, carro, data…  (Ctrl+F)"
+BROWSER_SEARCH_NAME = "Buscar sessões"
+BROWSER_FILTER_ALL_TRACKS = "Pista"
+BROWSER_FILTER_ALL_CARS = "Carro"
+BROWSER_FILTER_ALL_TYPES = "Tipo"
+BROWSER_FILTER_TRACK_NAME = "Filtrar por pista"
+BROWSER_FILTER_CAR_NAME = "Filtrar por carro"
+BROWSER_FILTER_TYPE_NAME = "Filtrar por tipo de sessão"
+BROWSER_LIST_NAME = "Sessões importadas, agrupadas por pista e carro"
+BROWSER_COUNT_ALL = "{total} sessões"
+BROWSER_COUNT_FILTERED = "{shown} de {total} sessões"
+BROWSER_EMPTY_TITLE = "Nenhuma sessão importada"
+BROWSER_EMPTY_HINT = (
+    "Importe os arquivos .duckdb da pasta Telemetry do Le Mans Ultimate "
+    "para começar."
+)
+BROWSER_IMPORT_FILES = "Importar sessão…"
+BROWSER_IMPORT_FOLDER = "Importar pasta…"
+BROWSER_NO_MATCH_TITLE = "Nenhuma sessão encontrada"
+BROWSER_NO_MATCH_HINT = "Nada corresponde à busca e aos filtros atuais."
+BROWSER_CLEAR_FILTERS = "Limpar filtros"
+BROWSER_TOOLTIP_SESSION = "{track} · {car}\n{date} · {type}\n{n} voltas, {comparable} comparáveis"
+BROWSER_TOOLTIP_BEST = "Melhor volta comparável da sessão"
+BROWSER_TOOLTIP_NO_COMPARABLE = "Nenhuma volta comparável nesta sessão"
+BROWSER_TOOLTIP_REFERENCE = "Contém a volta fixada como referência (volta {number})"
+ACTION_FIND_SESSION = "&Buscar sessão"
 
 # --- Chart ------------------------------------------------------------------
 CHART_AXIS_DISTANCE = "Distância (m)"
@@ -193,25 +230,36 @@ CHART_ROW_SPEED = "Velocidade (km/h)"
 CHART_ROW_PEDALS = "Pedais (%)"
 CHART_ROW_STEERING = "Volante (%)"
 CHART_ROW_GEAR = "Marcha"
-CHART_ROW_RPM = "Motor (rpm)"
-CHART_ROW_DELTA = "Delta-t (s)"
+CHART_ROW_RPM = "Rotação (rpm)"
+CHART_ROW_DELTA = "Δt (s)"
 
 #: Short names used in the cursor readout, where space is tight.
-CHART_SERIES_SPEED = "vel"
-CHART_SERIES_THROTTLE = "acel"
-CHART_SERIES_BRAKE = "freio"
-CHART_SERIES_STEERING = "volante"
-CHART_SERIES_GEAR = "marcha"
-CHART_SERIES_RPM = "rpm"
-CHART_SERIES_DELTA = "Δt"
+CHART_SERIES_SPEED = "Velocidade · km/h"
+CHART_SERIES_THROTTLE = "Acelerador · %"
+CHART_SERIES_BRAKE = "Freio · %"
+CHART_SERIES_STEERING = "Volante · %"
+CHART_SERIES_GEAR = "Marcha"
+CHART_SERIES_RPM = "Rotação · rpm"
+CHART_SERIES_DELTA = "Δt · s"
 
 CHART_LEGEND_PRIMARY = "Volta {number} · {time}"
 CHART_LEGEND_BENCHMARK = "referência: volta {number} · {time} · {gap} s"
 CHART_LEGEND_NO_BENCHMARK = "sem comparação"
+CHART_KEY_PRIMARY = "Volta {number}"
+CHART_KEY_BENCHMARK = "Ref. · volta {number}"
+CHART_KEY_IDEAL = "Volta ideal"
 
-CHART_READOUT_DISTANCE = "{distance:.0f} m"
-CHART_READOUT_TIME = "{time:.2f} s"
+CHART_READOUT_POSITION = "Posição · m"
+CHART_READOUT_ELAPSED = "Tempo · s"
 CHART_READOUT_SEPARATOR = " · "
+CHART_READOUT_NAME = "Valores no cursor"
+CHART_CHANNELS_NAME = "Canais exibidos nos gráficos"
+CHART_CHIP_SPEED = "Velocidade"
+CHART_CHIP_PEDALS = "Pedais"
+CHART_CHIP_STEERING = "Volante"
+CHART_CHIP_GEAR = "Marcha"
+CHART_CHIP_RPM = "Rotação"
+CHART_CHIP_DELTA = "Δt"
 
 # --- Track map --------------------------------------------------------------
 MAP_TITLE = "Traçado"
@@ -261,7 +309,6 @@ GG_FILL_TOOLTIP = (
 GG_CURSOR = "{lateral:+.2f} g lat · {longitudinal:+.2f} g long · {total:.2f} g total"
 
 # --- Corner table -----------------------------------------------------------
-CORNERS_TITLE = "Curvas"
 CORNERS_EMPTY = "Nenhuma curva detectada nesta volta."
 
 CORNERS_COLUMN_NAME = "Curva"
@@ -275,6 +322,19 @@ CORNERS_COLUMN_SPEED_DELTA = "ΔV mín (km/h)"
 CORNERS_COLUMN_DELTA = "Δt (s)"
 CORNERS_COLUMN_BEST_LAP = "Melhor volta"
 CORNERS_COLUMN_GAIN = "A ganhar (s)"
+
+#: The bands above the table's columns. The corner card's sections use the same
+#: words, so a figure is filed under the same question in both.
+CORNERS_GROUP_LAP = "Nesta volta"
+CORNERS_GROUP_REFERENCE = "Contra a referência"
+CORNERS_GROUP_IDEAL = "Contra a volta ideal"
+
+#: Before the name of the corner that costs the lap the most, in the table and
+#: on the card: a mark that is not a colour.
+COSTLIEST_MARK = "▸"
+COSTLIEST_IDEAL = "{seconds} s a ganhar contra a volta ideal"
+COSTLIEST_COMPARISON = "{seconds} s perdidos para a referência"
+CORNERS_TOOLTIP_COSTLIEST = "{mark} A curva que mais custa nesta volta: {cost}."
 
 CORNERS_TOOLTIP_NAME = (
     "Clique duas vezes para nomear a curva. O nome fica gravado por pista e "
@@ -318,12 +378,12 @@ CONSISTENCY_UNAVAILABLE = (
     "stint. Dispersão medida em menos que isso não significa nada."
 )
 CONSISTENCY_SUMMARY = (
-    "{n_laps} voltas · mediana {median} · σ dos tempos {std:.3f} s · "
-    "{gain:.2f} s/volta disponíveis"
+    "{n_laps} voltas · mediana {median} · σ dos tempos {std} s · "
+    "{gain} s/volta disponíveis"
 )
 CONSISTENCY_STINT = "Stint {number} ({n_laps} voltas)"
 CONSISTENCY_EXCLUDED = "Fora da medição: {laps}"
-CONSISTENCY_EXCLUDED_TOO_SLOW = "volta {number} ({excess:+.3f} s da mediana)"
+CONSISTENCY_EXCLUDED_TOO_SLOW = "volta {number} ({excess} s da mediana)"
 CONSISTENCY_EXCLUDED_TOO_FEW = "volta {number} (stint curto demais)"
 
 CONSISTENCY_COLUMN_CORNER = "Curva"
@@ -349,11 +409,21 @@ CONSISTENCY_TOOLTIP_TIME_LOST = (
     "de ápice."
 )
 
+#: What the lap-by-lap plot shows: the full name, on its axis and for screen
+#: readers, and the chip, worded like the table's columns. Both carry the unit.
 CONSISTENCY_METRIC_BRAKING = "Ponto de frenagem (m)"
 CONSISTENCY_METRIC_SPEED = "Velocidade mínima (km/h)"
 CONSISTENCY_METRIC_THROTTLE = "Retomada do acelerador (m)"
+CONSISTENCY_CHIP_BRAKING = "Frenagem (m)"
+CONSISTENCY_CHIP_SPEED = "V mín (km/h)"
+CONSISTENCY_CHIP_THROTTLE = "Acelerador (m)"
+CONSISTENCY_UNIT_M = "m"
+CONSISTENCY_UNIT_KMH = "km/h"
+CONSISTENCY_METRIC_NAME = "Medida no gráfico volta a volta"
+CONSISTENCY_STINT_NAME = "Stint"
+CONSISTENCY_STINT_TOOLTIP = "Voltas {first} a {last}. A consistência é medida dentro de um stint."
 CONSISTENCY_PLOT_AXIS_LAP = "Volta"
-CONSISTENCY_PLOT_TITLE = "{corner} · média {mean:.1f} · σ {std:.1f}"
+CONSISTENCY_PLOT_TITLE = "{corner} · média {mean} {unit} · σ {std} {unit}"
 CONSISTENCY_PLOT_EMPTY = "Selecione uma curva para ver volta a volta."
 CONSISTENCY_LEGEND_MEAN = "média"
 CONSISTENCY_LEGEND_BAND = "±1σ"
@@ -490,8 +560,12 @@ ANON_SAME_PATH = (
 
 # --- Panels -----------------------------------------------------------------
 MENU_PANELS = "&Painéis"
-DOCK_CORNERS = "Curvas e consistência"
+DOCK_CORNERS = "Curvas"
+DOCK_CONSISTENCY = "Consistência"
+DOCK_LAPS = "Voltas"
+DOCK_DETAIL = "Curva selecionada"
 TOOLBAR_MAIN = "Barra de ferramentas"
+TOOLBAR_HEADER = "Resumo da sessão"
 #: Short forms for the toolbar, where the menu's full wording would push the
 #: last buttons into the overflow menu. The menu keeps the full text.
 TOOLBAR_COMPARE_BEST = "Melhor da sessão"
@@ -640,3 +714,65 @@ def session_type_label(code: str) -> str:
         "T": SESSION_TYPE_TEST,
     }
     return labels.get(code.upper(), SESSION_TYPE_UNKNOWN.format(code=code))
+
+# --- Session header ---------------------------------------------------------
+HEADER_EMPTY = "Nenhuma volta aberta. Escolha uma volta em Sessões, ou importe uma sessão."
+HEADER_LAP = "Volta {number}"
+HEADER_REFERENCE = "Referência"
+HEADER_REFERENCE_NONE = "sem comparação"
+HEADER_REFERENCE_LAP = "volta {number} · {time}"
+HEADER_REFERENCE_IDEAL = "volta ideal · {time}"
+HEADER_DELTA = "Diferença"
+HEADER_BEST = "Melhor da sessão"
+HEADER_BEST_VALUE = "{time} · volta {number}"
+HEADER_IDEAL = "Volta ideal"
+HEADER_IDEAL_VALUE = "{time} ({gain} s)"
+HEADER_SECTOR = "S{n}"
+HEADER_SECTOR_TOOLTIP = "Setor {n}: {time} · melhor da sessão {best} ({gap} s)"
+HEADER_SECTOR_BEST_TOOLTIP = "Setor {n}: {time} · melhor setor da sessão"
+HEADER_DELTA_TOOLTIP = (
+    "Tempo da volta aberta menos o da referência. Negativo: a volta aberta é "
+    "mais rápida."
+)
+
+# --- Lap list ---------------------------------------------------------------
+LAPS_EMPTY = "Abra uma sessão para ver as voltas."
+LAPS_COLUMN_LAP = "Volta"
+LAPS_COLUMN_TIME = "Tempo"
+LAPS_COLUMN_SECTOR = "S{n}"
+LAPS_COLUMN_GAP = "Δ melhor"
+LAPS_COLUMN_STATUS = "Situação"
+LAPS_SUMMARY = "{n} voltas · {comparable} comparáveis · melhor {best}"
+LAPS_MARK_BEST = "melhor"
+LAPS_MARK_REFERENCE = "ref"
+LAPS_TOOLTIP_BEST = "Melhor volta comparável da sessão"
+LAPS_TOOLTIP_REFERENCE = "Volta de referência da comparação atual"
+LAPS_TOOLTIP_SECTOR_BEST = "Melhor setor da sessão"
+LAPS_TOOLTIP_ROW = "Clique para abrir a volta."
+
+# --- Corner detail ----------------------------------------------------------
+DETAIL_EMPTY = "Escolha uma curva na tabela, no mapa ou no gráfico."
+DETAIL_APEX = "Ápice em {distance} m · janela {start}–{end} m"
+DETAIL_SECTION_LAP = CORNERS_GROUP_LAP
+DETAIL_SECTION_REFERENCE = CORNERS_GROUP_REFERENCE
+DETAIL_SECTION_IDEAL = CORNERS_GROUP_IDEAL
+#: The card's flag on the corner the table marks: the same rule, the same mark.
+DETAIL_COSTLIEST = "{mark} A curva que mais custa · {cost}"
+DETAIL_MIN_SPEED = "V mín"
+DETAIL_ENTRY_SPEED = "V entrada"
+DETAIL_BRAKING = "Frenagem"
+DETAIL_BRAKING_POINT = "Ponto de frenagem"
+DETAIL_THROTTLE = "Retomada"
+DETAIL_TRAIL = "Trail braking"
+DETAIL_COASTING = "Inércia"
+DETAIL_SPEED_DELTA = "ΔV mín"
+DETAIL_TIME_DELTA = "Δt na curva"
+DETAIL_GAIN = "A ganhar"
+DETAIL_BEST_LAP = "Melhor volta nesta curva"
+DETAIL_FLAT = "sem frenagem"
+DETAIL_NOT_COMPARING = "Sem comparação ativa."
+DETAIL_KMH = "{value} km/h"
+DETAIL_M = "{value} m"
+DETAIL_AT_M = "em {value} m"
+DETAIL_S = "{value} s"
+DETAIL_LAP = "volta {value}"

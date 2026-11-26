@@ -139,6 +139,32 @@ def test_forget_session(con):
     assert catalog.forget_session(con, "a" * 64) is False
 
 
+def test_sessions_whose_file_was_deleted_are_forgotten(con, tmp_path):
+    folder = tmp_path / "Telemetry"
+    folder.mkdir()
+    kept = folder / "kept.duckdb"
+    kept.write_bytes(b"")
+    deleted = folder / "deleted.duckdb"
+
+    catalog.import_session(con, "a" * 64, make_info(path=kept), [lap(0, 110.4)])
+    catalog.import_session(
+        con, "b" * 64, make_info(session_id="b" * 64, path=deleted), [lap(0, 109.0)]
+    )
+
+    assert catalog.forget_missing_sessions(con) == {"b" * 64: deleted}
+    assert [s.session_id for s in catalog.list_sessions(con)] == ["a" * 64]
+    assert catalog.list_laps(con, "b" * 64) == []
+
+
+def test_sessions_in_a_missing_folder_are_kept(con, tmp_path):
+    """A whole folder gone is a drive not mounted, not a deleted history."""
+    unmounted = tmp_path / "unmounted" / "session.duckdb"
+    catalog.import_session(con, "a" * 64, make_info(path=unmounted), [lap(0, 110.4)])
+
+    assert catalog.forget_missing_sessions(con) == {}
+    assert catalog.statistics(con)["sessions"] == 1
+
+
 # --------------------------------------------------------------------------- #
 # Best laps
 # --------------------------------------------------------------------------- #

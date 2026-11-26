@@ -294,8 +294,10 @@ on PATH — usually the system one — and fails with `No module named 'PySide6'
 `main.py` checks for this and prints the command to use instead.
 
 Import sessions from **Arquivo ▸ Importar pasta...**, pointing at the game's
-`UserData/Telemetry`. The tree groups them track ▸ car ▸ session ▸ lap, since
-laps are only comparable within one track and one car. Laps that cannot be
+`UserData/Telemetry`. The Sessões panel groups them by track · car, since laps
+are only comparable within one track and one car, newest first, with a search
+box (Ctrl+F) and track, car and session-type filters; the Voltas panel below
+lists the chosen session's laps with their sectors. Laps that cannot be
 compared — partial, invalidated, or touching the pit lane — are dimmed rather
 than hidden: they still hold telemetry worth looking at.
 
@@ -309,6 +311,33 @@ that a recording stall shifted everything after it.
 
 Tests run headless against Qt's `offscreen` platform, so the interface is
 covered in CI with no display.
+
+### As a Windows program
+
+To open it like any other program — double-click, no terminal, no Python on the
+machine — build `LMU Telemetry.exe`:
+
+```powershell
+.\scripts\build_exe.ps1             # or: .\scripts\build_exe.ps1 -Shortcut
+```
+
+That installs the build dependencies (`requirements-build.txt`, PyInstaller),
+builds `dist\LMU Telemetry\`, and **smoke-tests the result**: it imports the demo
+session into a throwaway folder, launches the .exe with `--smoke-test` and fails
+unless the window opened the lap and exited cleanly. `-Shortcut` also puts a
+shortcut on the desktop.
+
+- Copy the **whole** `dist\LMU Telemetry` folder (about 310 MB, mostly Qt,
+  SciPy and Matplotlib); the .exe needs the `_internal` folder beside it. It is a
+  folder rather than a single file because a single-file build unpacks itself on
+  every launch, which costs seconds each time.
+- Your data is not in that folder: the catalog, cache, log and optional
+  `config.toml` live in `%USERPROFILE%\.lmu-telemetry`, so rebuilding or replacing
+  the program keeps every imported session.
+- The .exe is not code-signed, so Windows SmartScreen or an antivirus may ask
+  before the first run.
+- Build definition: `packaging/lmu_telemetry.spec`; icon: `assets/app.ico`
+  (redrawn by `scripts/make_icon.py`).
 
 ---
 
@@ -458,7 +487,16 @@ throttle, and it is invisible on a speed trace.
 With a comparison loaded it also carries the time and minimum speed each corner
 gave away. With the ideal lap it carries the two columns that matter most:
 which lap of the session drove this corner best, and what matching it is worth.
-That column, read top to bottom, is the practice list.
+That column, read top to bottom, is the practice list. A band over the header
+names each group of columns: *Nesta volta*, *Contra a referência*, *Contra a
+volta ideal*.
+
+**The rows stay in lap order, and the corner that costs the most is marked
+instead of moved**: the most to gain against the ideal lap or, without one, the
+most time lost to the comparison. An amber bar at its edge, the whole row in
+bold, and "▸" before its name - never colour alone. The corner card says the
+same thing in words when the cursor reaches that corner, and the two read one
+rule, so they cannot point at different corners.
 
 **Corner names are anchored to a distance, not to a corner number.** The number
 shifts the moment the detector finds one more or one fewer corner — a wet lap, a
@@ -512,6 +550,10 @@ the plot shows which it is, and a column states the answer.
 
 Measured per stint. Across a pit stop fuel load and tyre age both step, so the
 dispersion would be reporting the car's state as the driver's repeatability.
+The stint and the measure plotted are chips above the panel - the stint chips
+only when there is more than one stint, every measure with its unit - and the
+measure chosen stays put when you switch stint, since comparing it across
+stints is why you switch.
 
 Two things the real data corrected:
 

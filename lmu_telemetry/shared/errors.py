@@ -18,6 +18,15 @@ class SessionFileError(TelemetryError):
     """The session file cannot be opened, or is not a usable DuckDB database."""
 
 
+class SessionFileMissingError(SessionFileError):
+    """The session file no longer exists at the path it was imported from.
+
+    Told apart from an unreadable file because the remedy differs: a file that
+    is gone will never open again, so the catalog drops the session, while a
+    locked or corrupt one is left for the user to deal with.
+    """
+
+
 class SchemaError(TelemetryError):
     """The file opened, but its structure is not what the reader expects.
 

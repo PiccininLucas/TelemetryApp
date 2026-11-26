@@ -335,6 +335,33 @@ def forget_session(con: duckdb.DuckDBPyConnection, session_id: str) -> bool:
     return True
 
 
+def forget_missing_sessions(con: duckdb.DuckDBPyConnection) -> dict[str, Path]:
+    """Remove every session whose source file has been deleted.
+
+    A file counts as deleted only when the folder it was imported from still
+    exists. A missing folder more likely means a drive that is not mounted - an
+    external disk, a Steam library on another drive - and dropping a whole
+    history because a disk was unplugged would be far worse than listing a few
+    sessions that cannot open. Corner names are kept per track, so they survive.
+
+    Returns:
+        The removed sessions' source paths, by session id.
+    """
+    removed: dict[str, Path] = {}
+    for session_id, source in con.execute(
+        "SELECT session_id, source_path FROM sessions"
+    ).fetchall():
+        path = Path(source)
+        if path.parent.is_dir() and not path.exists():
+            forget_session(con, session_id)
+            removed[session_id] = path
+    if removed:
+        logger.info(
+            "Removed %d session(s) whose file no longer exists", len(removed)
+        )
+    return removed
+
+
 def set_corner_name(
     con: duckdb.DuckDBPyConnection,
     track_id: str,
