@@ -92,11 +92,31 @@ def test_curves_and_axes_are_cached_but_the_cursor_is_not(qt_app):
     assert row.cursor.cacheMode() != CACHED
 
 
+def _aliased(font: QtGui.QFont) -> QtGui.QFont:
+    font.setStyleStrategy(QtGui.QFont.StyleStrategy.NoAntialias)
+    return font
+
+
 def test_caching_does_not_change_a_pixel(qt_app):
-    """The cache is a speed-up, not a different picture."""
+    """The cache is a speed-up, not a different picture: nothing moved, cut or
+    left stale.
+
+    Text is drawn aliased for the comparison. With real fonts, an axis drawn
+    through its cache gets greyscale antialiasing - a cache pixmap is
+    transparent, and subpixel (ClearType) antialiasing needs an opaque
+    surface - while drawn directly it gets subpixel. That is a rendering mode,
+    not a misplaced pixel, and it is the price of the axis cache (repaint 3 ms
+    instead of 32). Windows' offscreen platform has no fonts, so this only
+    showed on the Ubuntu runner, which does.
+    """
     chart = ChartStack()
     chart.resize(700, 500)
     chart.show_laps(_trace(n=2000, speed_ms=45.0), _trace("Volta 1", n=2000))
+    for row in chart._rows.values():
+        for side in ("left", "bottom"):
+            axis = row.plot.getAxis(side)
+            axis.setTickFont(_aliased(plotting.tick_font()))
+            axis.label.setFont(_aliased(axis.label.font()))
     chart.show()
     QtWidgets.QApplication.processEvents()
     cached = chart.plots.grab().toImage()

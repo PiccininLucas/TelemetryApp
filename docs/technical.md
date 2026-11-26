@@ -742,7 +742,12 @@ literal and no `setStyleSheet`**. The print palette in `infrastructure/export/`
   evicted each other and every move missed), and rows fit their Y range once per
   lap (`chart_panel._fit_y`) instead of leaving pyqtgraph's auto-range on, which
   re-applies the range on every paint and discards the caches. Pens are
-  **cosmetic** (`LineStyle.pen`): widths are pixels, not data units.
+  **cosmetic** (`LineStyle.pen`): widths are pixels, not data units. One
+  visible effect, accepted: a cached axis draws its text with greyscale
+  antialiasing, because a cache pixmap is transparent and subpixel (ClearType)
+  needs an opaque surface. Dropping the axis cache to get ClearType back costs
+  repaint 3 → 32 ms and pan 38 → 90 ms. `test_caching_does_not_change_a_pixel`
+  compares with text aliased for that reason.
   `scripts/bench_charts.py` (13 600 m lap, 6 rows, 2 laps + delta): cursor move
   86 → 4 ms, repaint 95 → 3 ms, pan 115 → 38 ms, load 120 → 88 ms.
 - **Colour is never the only cue.** The comparison lap is dashed in every row

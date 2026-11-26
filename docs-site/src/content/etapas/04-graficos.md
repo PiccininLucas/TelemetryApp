@@ -66,6 +66,8 @@ No caminho apareceu um defeito antigo: os pens criados fora do `pg.mkPen` não e
 
 Antialiasing continua desligado. O cache usa memória proporcional à área dos gráficos; o limite é teto, não alocação.
 
+**Correção (26/11/2026):** "cache sem mudar nenhum pixel" vale para as curvas, mas não para o texto dos eixos. O pixmap do cache é transparente, e o antialiasing subpixel (ClearType) precisa de fundo opaco, então os números e títulos dos eixos saem com antialiasing em tons de cinza. Sem cache, saem com ClearType. Isso só apareceu na primeira CI no Ubuntu, porque a plataforma offscreen do Windows não tem fontes. O cache dos eixos ficou, porque sem ele a repintura vai de 3 para 32 ms e o pan de 38 para 90 ms. O teste agora compara com o texto sem antialiasing, o que ainda pega qualquer conteúdo deslocado, cortado ou desatualizado.
+
 ## Decisões (16/11/2026)
 
 | Pergunta | Decisão |
