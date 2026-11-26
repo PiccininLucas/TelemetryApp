@@ -17,7 +17,7 @@ import pytest
 # Must be set before PySide6 is imported anywhere in the process.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6 import QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtWidgets  # noqa: E402
 
 from lmu_telemetry.domain.models import Lap, LapFlag, SessionInfo  # noqa: E402
 from lmu_telemetry.composition import build_gateways  # noqa: E402
@@ -63,6 +63,22 @@ def qt_app():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     theme.apply(app)
     yield app
+
+
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path):
+    """Keep the window's saved layout out of the user's real settings, and out of
+    one test's way when the next builds a window."""
+    QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
+    QtCore.QSettings.setPath(
+        QtCore.QSettings.Format.IniFormat, QtCore.QSettings.Scope.UserScope,
+        str(tmp_path / "qsettings"),
+    )
+    QtCore.QCoreApplication.setOrganizationName("lmu-telemetry-tests")
+    QtCore.QCoreApplication.setApplicationName("tests")
+    yield
+    QtCore.QCoreApplication.setOrganizationName("")
+    QtCore.QCoreApplication.setApplicationName("")
 
 
 @pytest.fixture
@@ -513,7 +529,8 @@ def test_main_window_builds_and_closes_cleanly(qt_app, catalog_with_sessions):
     window = MainWindow(build_gateways())
     try:
         assert window.windowTitle()
-        assert window.splitter.count() == 3  # browser, traces, side panels
+        assert window.centralWidget() is not None
+        assert len(window.docks) == 4
         # No telemetry file exists behind this catalog, so no session opens.
         assert len(window._sessions) == 0
     finally:

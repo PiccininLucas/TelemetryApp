@@ -138,8 +138,8 @@ lmu_telemetry/
     storage/                  paths.py, catalog.py (DuckDB), cache.py (JSON manifest), importer.py
     export/                   charts.py (matplotlib), tables.py (CSV), report.py (PDF), anonymise.py
   presentation/             PySide6
-    main_window, session_browser, chart_panel, track_map, gg_panel,
-    corner_table, consistency_panel, theme
+    main_window, session_state, import_worker, session_browser, chart_panel,
+    track_map, gg_panel, corner_table, consistency_panel, theme
 scripts/                    CLI tools (section 2)
 tests/                      pytest suite + synthetic data builders
 data/demo/                  one anonymised session, the only .duckdb tracked in git
@@ -426,16 +426,40 @@ going past a bad file, returning `(results, failures)`.
 
 ### Window composition (`MainWindow`)
 
+The traces are the window's centre; everything else is a `QDockWidget`, so each
+panel can be hidden, moved, tabbed with another or floated.
+
 ```
-┌ warning banner (amber; time-base corrections, refused comparisons) ───────────┐
-│ SessionBrowser │ centre (vertical splitter)        │ side (vertical splitter) │
-│ track▸car▸     │  ChartStack (stacked traces)      │  TrackMap                │
-│ session▸lap    │  QTabWidget: CornerTable |        │  FrictionPanel (g-g)     │
-│                │              ConsistencyPanel     │                          │
+┌ menu bar ──────────────────────────────────────────────────────────────────────┐
+├ toolbar: import · refresh │ comparison · pin │ axis │ export PNG · PDF ─────────┤
+├────────────────┬─────────────────────────────────────┬─────────────────────────┤
+│ dock_sessions  │ warning banner (amber)              │ dock_map   (TrackMap)   │
+│ SessionBrowser │ ChartStack (centre widget)          ├─────────────────────────┤
+│ track▸car▸     ├─────────────────────────────────────┤ dock_gg    (g-g)        │
+│ session▸lap    │ dock_corners: CornerTable |         │                         │
+│                │               ConsistencyPanel      │                         │
+├────────────────┴─────────────────────────────────────┴─────────────────────────┤
+│ status bar                                                                     │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### State objects (all in `main_window.py`)
+The side docks run the full height (`setCorner`), so the corner tables sit under
+the traces they are read against. The arrangement is saved to `QSettings` when the
+window closes and restored on the next run; `Painéis ▸ Restaurar layout padrão`
+(`MainWindow.reset_layout`) puts everything back. A saved state is applied only if
+it was written under the current `LAYOUT_STATE_VERSION` and `restoreState`
+accepts it; otherwise the default is used. Bump the version when a dock is added,
+removed or renamed — the dock object names (`dock_sessions`, `dock_corners`,
+`dock_map`, `dock_gg`) are what saved layouts are keyed on.
+
+The toolbar reuses the menu's `QAction` objects, so checked and enabled state is
+shared. It shows each action's `iconText` — a short wording — while the menu keeps
+the full text and the tooltip carries it too.
+
+The window takes its collaborators as arguments: `MainWindow(gateways, settings=None)`.
+`settings` is injectable so tests never touch the user's real settings.
+
+### State objects (`session_state.py`; `ImportWorker` in `import_worker.py`)
 
 - **`SessionPool`** — LRU of at most **2** open `Session`s (enough for a
   comparison against a pinned lap from another file). Evicting closes the DuckDB
@@ -462,7 +486,7 @@ g-g → warnings → status line with timing.
 `_on_cursor_moved(distance_m)`, which moves the cursor in every panel.
 
 Corner rename: `CornerTable.corner_renamed(index, distance, name)` →
-`MainWindow.rename_corner` → `catalog.set_corner_name` → every open session
+`MainWindow.rename_corner` → `CatalogGateway.set_corner_name` → every open session
 re-applies names and drops its `SessionAnalysis` → `show_lap` again.
 
 ### Rules baked into the UI

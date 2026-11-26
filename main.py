@@ -90,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(level=logging.INFO, log_file=paths.data_dir() / "lmu-telemetry.log")
 
     app = QtWidgets.QApplication(argv if argv is not None else sys.argv)
+    # QSettings keys the saved window layout on both names.
+    app.setOrganizationName("LMU Telemetry")
     app.setApplicationName(strings.APP_NAME)
     app.setApplicationDisplayName(strings.APP_NAME)
 

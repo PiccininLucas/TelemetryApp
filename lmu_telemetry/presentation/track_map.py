@@ -100,9 +100,6 @@ class TrackMap(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        heading = QtWidgets.QLabel(strings.MAP_TITLE)
-        heading.setProperty("role", "heading")
-        layout.addWidget(heading)
 
         self.plot = pg.PlotWidget()
         self.plot.setBackground(theme.BACKGROUND)
