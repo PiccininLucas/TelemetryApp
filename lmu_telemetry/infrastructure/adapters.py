@@ -19,7 +19,7 @@ from lmu_telemetry.application.reporting import ReportContext
 from lmu_telemetry.domain.records import CornerReference, LapRow, SessionRow
 from lmu_telemetry.infrastructure.export import charts, report, tables
 from lmu_telemetry.infrastructure.ingest.session_loader import Session, load_session
-from lmu_telemetry.infrastructure.storage import catalog, importer
+from lmu_telemetry.infrastructure.storage import cache, catalog, importer
 
 
 class DuckDbCatalog:
@@ -37,6 +37,13 @@ class DuckDbCatalog:
             sessions = catalog.list_sessions(con)
             laps = {s.session_id: catalog.list_laps(con, s.session_id) for s in sessions}
         return sessions, laps
+
+    def forget_missing_sessions(self) -> list[Path]:
+        with catalog.connect() as con:
+            removed = catalog.forget_missing_sessions(con)
+        for session_id in removed:
+            cache.clear(session_id)
+        return list(removed.values())
 
     def track_length(self, track_name: str) -> float | None:
         with catalog.connect() as con:

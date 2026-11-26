@@ -86,6 +86,18 @@ class CatalogGateway(Protocol):
         """
         ...
 
+    def forget_missing_sessions(self) -> list[Path]:
+        """Drop the sessions whose file was deleted, and return their paths.
+
+        A session whose whole folder is missing is kept: that is more likely a
+        drive that is not mounted than a deleted file.
+
+        Raises:
+            Exception: The catalog cannot be written; the caller decides how
+                to degrade.
+        """
+        ...
+
     def track_length(self, track_name: str) -> float | None: ...
 
     def corner_references(self, track_name: str) -> list[CornerReference]: ...

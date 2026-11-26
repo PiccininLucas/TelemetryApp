@@ -7,7 +7,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lmu_telemetry.shared.errors import SchemaError, SessionFileError
+from lmu_telemetry.shared.errors import (
+    SchemaError, SessionFileError, SessionFileMissingError,
+)
 from lmu_telemetry.infrastructure.ingest import duckdb_reader
 
 
@@ -45,7 +47,8 @@ def test_quoting_actually_works_against_a_spaced_table(synthetic_session):
 # --------------------------------------------------------------------------- #
 
 def test_open_missing_file_raises(tmp_path: Path):
-    with pytest.raises(SessionFileError):
+    """Its own type, so the interface can drop a session whose file is gone."""
+    with pytest.raises(SessionFileMissingError):
         duckdb_reader.open_session(tmp_path / "does not exist.duckdb")
 
 

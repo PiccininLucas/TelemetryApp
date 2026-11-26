@@ -56,7 +56,7 @@ from lmu_telemetry.presentation.status_line import StatusLine
 from lmu_telemetry.presentation.track_map import MapColour, TrackMap
 from lmu_telemetry.presentation.window_actions import WindowActions
 from lmu_telemetry.shared import strings
-from lmu_telemetry.shared.errors import TelemetryError
+from lmu_telemetry.shared.errors import SessionFileMissingError, TelemetryError
 from lmu_telemetry.shared.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -326,11 +326,31 @@ class MainWindow(QtWidgets.QMainWindow):
     # -- catalog and import ------------------------------------------------
 
     def reload_catalog(self, *, select_first: bool = False) -> None:
+        removed = self._forget_missing_sessions()
         n_sessions = self.browser.reload()
         if select_first and n_sessions:
             self.browser.select_default_lap()
         elif not n_sessions:
             self.status.rest(strings.BROWSER_EMPTY)
+        if removed:
+            self.status.notify(strings.STATUS_SESSIONS_FORGOTTEN.format(n=len(removed)))
+
+    def _forget_missing_sessions(self) -> list[Path]:
+        """Drop from the catalog the sessions whose file was deleted.
+
+        Also lets go of a pinned reference lap from one of them: it can never
+        be drawn again.
+        """
+        try:
+            removed = self._gateways.catalog.forget_missing_sessions()
+        except Exception as exc:  # noqa: BLE001 - the list still works without it
+            logger.error("Could not remove missing sessions: %s", exc)
+            return []
+        gone = {str(path) for path in removed}
+        if self._pinned is not None and str(self._pinned.source_path) in gone:
+            self._pinned = None
+            self.browser.mark_reference(None)
+        return removed
 
     def import_session(self) -> None:
         paths, _filter = QtWidgets.QFileDialog.getOpenFileNames(
@@ -542,8 +562,30 @@ class MainWindow(QtWidgets.QMainWindow):
     def _fail(self, selection: LapSelection, exc: Exception) -> None:
         logger.error("Could not open %s: %s", selection.source_path, exc)
         self._clear_panels()
+        if isinstance(exc, SessionFileMissingError) and self._forget_session_of(selection):
+            return
         self.notices.show_notes([str(exc)], Severity.ERROR)
         self.status.rest(strings.STATUS_OPEN_FAILED)
+
+    def _forget_session_of(self, selection: LapSelection) -> bool:
+        """The chosen session's file is gone: take it, and any other session
+        whose file was deleted, off the list.
+
+        Returns whether the chosen session was removed. It is not when its
+        whole folder is missing - a drive not mounted, most likely - and then
+        the error is shown as for any file that cannot be opened.
+        """
+        removed = self._forget_missing_sessions()
+        if str(selection.source_path) not in {str(path) for path in removed}:
+            return False
+        self._selection = None
+        self.browser.reload()
+        self.setWindowTitle(strings.WINDOW_TITLE)
+        self.notices.show_notes(
+            [strings.NOTICE_SESSION_FORGOTTEN.format(path=selection.source_path)]
+        )
+        self.status.rest(strings.STATUS_SESSIONS_FORGOTTEN.format(n=len(removed)))
+        return True
 
     # -- panels talking to each other ----------------------------------------
 

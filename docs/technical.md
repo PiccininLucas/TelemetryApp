@@ -438,6 +438,17 @@ Everything lives under `LMU_TELEMETRY_DATA_DIR` (default `~/.lmu-telemetry`):
 `<session_id>:<lap_index>`. Both are natural keys, so re-importing is idempotent.
 Game files are only ever opened read-only; nothing is written next to them.
 
+**Sessions whose file was deleted leave the catalog.**
+`catalog.forget_missing_sessions` (through `CatalogGateway.forget_missing_sessions`,
+which also clears their cache) drops every session whose source file is gone
+*while its folder still exists*; a missing folder is taken for a drive not
+mounted, and those sessions are kept. Corner names are per track and survive.
+The window runs it on every catalog reload (status: *"n sessão(ões) removida(s)
+da lista"*) and when opening a session fails with `SessionFileMissingError` (a
+`SessionFileError` subclass raised by `duckdb_reader.open_session`), in which case
+the session leaves the list with a warning instead of an error, and a pinned
+reference from it is released.
+
 ### Catalog schema (`catalog.py`, `SCHEMA_VERSION = 1`)
 
 | Table | Key | Notes |
@@ -954,9 +965,10 @@ alone); CI also runs on `windows-latest`.
   `resample.align_to_common_grid` / `resample_channels`,
   `friction.envelope_for_window` / `combined_magnitude`,
   `distance.speed_from_distance`, `time_base.common_grid`,
-  `channel_registry.channels_by_format`, `catalog.forget_session` / `corner_names`,
+  `channel_registry.channels_by_format`, `catalog.corner_names`,
   `importer.load_cached`, `corrections.reference_*_g`. Delete any when sure it
-  will not be wired; there is no UI for forgetting a session yet.
+  will not be wired. (`catalog.forget_session` is now used, by
+  `forget_missing_sessions`; there is still no UI to forget a session by hand.)
 - **A few constants remain in code:** `corrections.reference_lateral_g`'s track
   width (1.6 m, a parameter used only by tests). Everything else numeric is in the
   configuration.

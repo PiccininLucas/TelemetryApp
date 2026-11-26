@@ -172,6 +172,12 @@ NOTICE_DISMISS = "Dispensar aviso"
 STATUS_REFERENCE_LAP = "volta {number}"
 STATUS_REFERENCE_IDEAL = "volta ideal"
 STATUS_OPEN_FAILED = "Não foi possível abrir a sessão. Veja o aviso acima dos gráficos."
+STATUS_SESSIONS_FORGOTTEN = (
+    "{n} sessão(ões) removida(s) da lista: arquivo não encontrado."
+)
+NOTICE_SESSION_FORGOTTEN = (
+    "O arquivo desta sessão não existe mais e ela foi removida da lista: {path}"
+)
 STATUS_NO_SELECTION = "Selecione uma volta na árvore à esquerda."
 STATUS_REFERENCE_PINNED = "Volta {number} fixada como referência."
 STATUS_NO_REFERENCE_PINNED = "Nenhuma volta fixada. Use Exibir ▸ Comparação ▸ Fixar."

@@ -88,7 +88,9 @@ def catalog_with_sessions(tmp_path, monkeypatch):
 
     def info(session_id: str, car: str, when: datetime) -> SessionInfo:
         return SessionInfo(
-            path=tmp_path / f"{session_id}.duckdb",
+            # In a folder that does not exist, as on a drive not mounted: the
+            # files cannot open, yet the catalog keeps the sessions.
+            path=tmp_path / "unmounted" / f"{session_id}.duckdb",
             track_name="Autodromo Nazionale Monza",
             session_type_code="R",
             started_at=when,
@@ -1259,6 +1261,54 @@ def test_a_session_that_cannot_be_opened_is_an_error_not_a_warning(
         assert not window.notices.isHidden()
         assert window.notices.severity is Severity.ERROR
         assert window.statusBar().currentMessage() == strings.STATUS_OPEN_FAILED
+        assert window.browser.tree.topLevelItemCount() == 1
+    finally:
+        window.close()
+
+
+def test_a_session_whose_file_was_deleted_is_removed_from_the_list(
+    qt_app, catalog_with_sessions, tmp_path
+):
+    """The file is gone but its folder is there: it will never open again, so
+    the session leaves the catalog instead of failing on every click."""
+    from lmu_telemetry.presentation.main_window import MainWindow
+
+    (tmp_path / "unmounted").mkdir()
+    window = MainWindow(build_gateways())
+    try:
+        assert window.browser.tree.topLevelItemCount() == 0
+        assert window.statusBar().currentMessage() == (
+            strings.STATUS_SESSIONS_FORGOTTEN.format(n=2)
+        )
+        with catalog.connect() as con:
+            assert catalog.list_sessions(con) == []
+    finally:
+        window.close()
+
+
+def test_opening_a_deleted_session_removes_it_and_says_so(
+    qt_app, catalog_with_sessions, tmp_path
+):
+    """Deleted while the application was open: the click that finds it gone
+    takes it off the list, with a warning rather than an error."""
+    from lmu_telemetry.presentation.main_window import MainWindow
+    from lmu_telemetry.presentation.notice_banner import Severity
+
+    window = MainWindow(build_gateways())
+    try:
+        selection = window._selection
+        assert selection is not None
+        (tmp_path / "unmounted").mkdir()
+
+        window.show_lap(selection)
+
+        assert window._selection is None
+        assert window.browser.tree.topLevelItemCount() == 0
+        assert not window.notices.isHidden()
+        assert window.notices.severity is Severity.WARNING
+        assert window.statusBar().currentMessage() == (
+            strings.STATUS_SESSIONS_FORGOTTEN.format(n=2)
+        )
     finally:
         window.close()
 
