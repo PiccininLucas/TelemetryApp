@@ -982,8 +982,11 @@ alone); CI also runs on `windows-latest`.
 - **The B2 guard** and the corner-name anchor drift under B1 (above).
 - `conftest.DEFAULT_TELEMETRY_DIRS` lists two Steam paths on this machine's
   layout; `LMU_TELEMETRY_DIR` already overrides them.
-- A new Windows CI job has not run yet: the first push will show whether anything
-  behaves differently there.
+- **CI runs only on pull requests and on pushes to `main`** (`tests.yml`), not
+  on pushes to a feature branch. Its first run (2026-11-26, PR #4) passed on
+  Windows and failed one pixel test on Ubuntu, the only runner whose offscreen
+  platform has fonts; see the cache note in section 9. Text-dependent pixel
+  tests have to allow for that.
 
 ---
 
